@@ -1,0 +1,46 @@
+<Window x:Class="Tunnelman.ExitConfirmWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Exit Tunnelman"
+        Width="420"
+        MinWidth="400"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Background="{StaticResource BgBrush}"
+        Foreground="{StaticResource TextBrush}"
+        FontFamily="Segoe UI"
+        UseLayoutRounding="True"
+        SourceInitialized="OnSourceInitialized">
+    <DockPanel Margin="20" Background="{StaticResource BgBrush}">
+        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,20">
+            <TextBlock Text="Keep this session?" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+            <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"
+                       Text="Running ncat hops will stop. You can keep the saved list for next time, or clear it."/>
+        </StackPanel>
+        <StackPanel>
+            <Button IsDefault="True" Click="OnKeepClick" HorizontalAlignment="Stretch" Margin="0,0,0,8">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE7E8;"/>
+                    <TextBlock Text="Keep session and exit" Margin="8,0,0,0" VerticalAlignment="Center"
+                               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                </StackPanel>
+            </Button>
+            <Button Style="{StaticResource DangerButton}" Click="OnClearClick" HorizontalAlignment="Stretch" Margin="0,0,0,8">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE74D;"/>
+                    <TextBlock Text="Clear session and exit" Margin="8,0,0,0" VerticalAlignment="Center"
+                               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                </StackPanel>
+            </Button>
+            <Button IsCancel="True" HorizontalAlignment="Stretch">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE711;"/>
+                    <TextBlock Text="Cancel" Margin="8,0,0,0" VerticalAlignment="Center"
+                               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                </StackPanel>
+            </Button>
+        </StackPanel>
+    </DockPanel>
+</Window>

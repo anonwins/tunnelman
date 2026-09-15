@@ -1,0 +1,228 @@
+<Window x:Class="Tunnelman.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Tunnelman"
+        xmlns:tunnels="clr-namespace:Tunnelman.Tunnels"
+        Title="{Binding WindowTitle}"
+        Height="620"
+        Width="920"
+        MinHeight="460"
+        MinWidth="760"
+        UseLayoutRounding="True"
+        Background="{StaticResource BgBrush}"
+        Foreground="{StaticResource TextBrush}"
+        FontFamily="Segoe UI"
+        StateChanged="OnStateChanged"
+        SourceInitialized="OnSourceInitialized"
+        Closing="OnClosing">
+    <Window.InputBindings>
+        <KeyBinding Gesture="Ctrl+N" Command="{x:Static local:MainWindow.AddTunnelCommand}"/>
+        <KeyBinding Key="Escape" Command="{x:Static local:MainWindow.HideCommand}"/>
+    </Window.InputBindings>
+    <DockPanel Background="{StaticResource BgBrush}">
+        <Border DockPanel.Dock="Bottom"
+                Background="{StaticResource SurfaceBrush}"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="0,1,0,0"
+                Padding="12,6">
+            <TextBlock Text="{Binding StatusText}"
+                       Foreground="{StaticResource MutedBrush}"
+                       TextTrimming="CharacterEllipsis"/>
+        </Border>
+
+        <Grid Margin="16" Background="{StaticResource BgBrush}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="16"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Button Style="{StaticResource PrimaryButton}" Click="OnAddClick" HorizontalAlignment="Left">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE710;"/>
+                        <TextBlock Text="Add tunnel" Margin="8,0,0,0" VerticalAlignment="Center"
+                                   Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                    </StackPanel>
+                </Button>
+                <Button Grid.Column="1"
+                        Style="{StaticResource CountChip}"
+                        Click="OnNcatChipClick"
+                        ToolTip="{Binding NcatPathText}"
+                        HorizontalAlignment="Right">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource GlyphSmall}" Text="&#xE968;"/>
+                        <TextBlock Text="{Binding ToolsStatusText}"
+                                   Margin="8,0,0,0" VerticalAlignment="Center"
+                                   Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                    </StackPanel>
+                </Button>
+            </Grid>
+
+            <Grid Grid.Row="2">
+                <ListBox x:Name="TunnelList"
+                         ItemsSource="{Binding Tunnels}"
+                         Visibility="{Binding HasTunnels, Converter={StaticResource BoolToVis}}"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                         SelectionChanged="OnSelectionChanged"
+                         PreviewMouseLeftButtonDown="OnTunnelListPreviewMouseDown">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate DataType="{x:Type tunnels:TunnelItem}">
+                            <Border Padding="10,8" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <ToggleButton Style="{StaticResource ToggleSwitch}"
+                                                  IsChecked="{Binding Enabled, Mode=OneWay}"
+                                                  IsEnabled="{Binding CanToggle}"
+                                                  Click="OnToggleClick"
+                                                  VerticalAlignment="Center"
+                                                  Margin="0,0,12,0"
+                                                  ToolTip="{Binding StatusText}"/>
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0">
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                        <local:PackLeftPanel Margin="0,4,0,0">
+                                            <TextBlock Text="{Binding ListenText}"
+                                                       Foreground="{StaticResource MutedBrush}"
+                                                       FontFamily="Cascadia Mono, Consolas"
+                                                       FontSize="11"
+                                                       VerticalAlignment="Center"
+                                                       Cursor="Hand"
+                                                       PreviewMouseLeftButtonDown="OnListenCopy"/>
+                                            <TextBlock Text="&#xE76C;"
+                                                       FontFamily="Segoe MDL2 Assets"
+                                                       FontSize="10"
+                                                       VerticalAlignment="Center"
+                                                       HorizontalAlignment="Center"
+                                                       Foreground="{StaticResource MutedBrush}"
+                                                       Margin="6,0"/>
+                                            <TextBlock local:PackLeftPanel.IsFill="True"
+                                                       Text="{Binding RemoteText}"
+                                                       Foreground="{StaticResource MutedBrush}"
+                                                       FontFamily="Cascadia Mono, Consolas"
+                                                       FontSize="11"
+                                                       VerticalAlignment="Center"
+                                                       Cursor="Hand"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       PreviewMouseLeftButtonDown="OnRemoteCopy"/>
+                                        </local:PackLeftPanel>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock Text="&#xE12B;"
+                                                   FontFamily="Segoe MDL2 Assets"
+                                                   FontSize="13"
+                                                   Foreground="{StaticResource MutedBrush}"
+                                                   VerticalAlignment="Center"
+                                                   Margin="0,0,6,0"
+                                                   ToolTip="{Binding ProxyText}"
+                                                   Visibility="{Binding HasProxy, Converter={StaticResource BoolToVis}}"/>
+                                        <Button Style="{StaticResource RowButton}" Click="OnEditClick"
+                                                ToolTip="Edit" Margin="0,0,6,0">
+                                            <TextBlock Style="{StaticResource GlyphSmall}" Text="&#xE70F;"/>
+                                        </Button>
+                                        <Button Style="{StaticResource RowDangerButton}" Click="OnDeleteClick"
+                                                ToolTip="Delete">
+                                            <TextBlock Style="{StaticResource GlyphSmall}" Text="&#xE74D;"/>
+                                        </Button>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+                <Border VerticalAlignment="Center" HorizontalAlignment="Stretch" Padding="32">
+                    <Border.Style>
+                        <Style TargetType="Border" BasedOn="{StaticResource Card}">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding ShowNcatMissing}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel HorizontalAlignment="Center" MaxWidth="420">
+                        <TextBlock Style="{StaticResource GlyphLarge}" Text="&#xE783;"
+                                   HorizontalAlignment="Center" Margin="0,0,0,12"/>
+                        <TextBlock Text="Nmap ncat not found" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Tunnelman uses Nmap ncat for SOCKS5 hops. Browse to ncat.exe or install Nmap."
+                                   Foreground="{StaticResource MutedBrush}"
+                                   TextAlignment="Center" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                        <Button Style="{StaticResource PrimaryButton}"
+                                Click="OnNcatChipClick"
+                                HorizontalAlignment="Center"
+                                Margin="0,16,0,0">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Style="{StaticResource Glyph}" Text="&#xE8B7;"/>
+                                <TextBlock Text="Find ncat" Margin="8,0,0,0" VerticalAlignment="Center"
+                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                </Border>
+
+                <Border VerticalAlignment="Center" HorizontalAlignment="Stretch" Padding="32">
+                    <Border.Style>
+                        <Style TargetType="Border" BasedOn="{StaticResource Card}">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding ShowNoTunnelsHint}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel HorizontalAlignment="Center" MaxWidth="420">
+                        <TextBlock Style="{StaticResource GlyphLarge}" Text="&#xE968;"
+                                   HorizontalAlignment="Center" Margin="0,0,0,12"/>
+                        <TextBlock Text="No tunnels" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Add a named SOCKS5 hop. Enabled tunnels start again the next time Tunnelman opens."
+                                   Foreground="{StaticResource MutedBrush}"
+                                   TextAlignment="Center" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <Border x:Name="LogCard"
+                    Style="{StaticResource Card}"
+                    CornerRadius="4"
+                    Padding="8,4"
+                    Margin="0,12,0,0"
+                    Grid.Row="3">
+                <DockPanel>
+                    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,2">
+                        <Button DockPanel.Dock="Right" Style="{StaticResource RowButton}" Click="OnCopyLogClick"
+                                ToolTip="Copy log"
+                                MinHeight="22" Padding="6,0" FontSize="11">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Style="{StaticResource GlyphSmall}" Text="&#xE8C8;"/>
+                                <TextBlock Text="Copy" Margin="6,0,0,0" VerticalAlignment="Center"
+                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                            </StackPanel>
+                        </Button>
+                        <TextBlock Style="{StaticResource CopyCheck}" DockPanel.Dock="Right"/>
+                        <TextBlock Text="Log" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    </DockPanel>
+                    <TextBox x:Name="LogBox"
+                             Style="{StaticResource LogBox}"
+                             IsReadOnly="True"
+                             TextWrapping="Wrap"
+                             AcceptsReturn="True"
+                             VerticalScrollBarVisibility="Auto"
+                             Text="{Binding SelectedItem.LogText, ElementName=TunnelList, Mode=OneWay}"/>
+                </DockPanel>
+            </Border>
+        </Grid>
+    </DockPanel>
+</Window>
