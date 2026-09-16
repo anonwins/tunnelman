@@ -16,7 +16,7 @@ internal sealed class TunnelStore
 {
     public const int CurrentVersion = 1;
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    internal static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
         PropertyNameCaseInsensitive = true,
@@ -29,8 +29,6 @@ internal sealed class TunnelStore
     {
         _filePath = filePath ?? AppPaths.TunnelsFile;
     }
-
-    public string FilePath => _filePath;
 
     public TunnelStoreLoadResult Load()
     {

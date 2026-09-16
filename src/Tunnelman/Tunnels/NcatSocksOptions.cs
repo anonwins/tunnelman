@@ -48,11 +48,11 @@ internal sealed class NcatSocksOptions
         ["remotePort"] = RemotePort,
     };
 
+    public string ListenKey => $"{ListenAddress.Trim()}:{ListenPort}";
     public string ListenText => $"{ListenAddress}:{ListenPort}";
     public string RemoteText => $"{RemoteHost}:{RemotePort}";
     public string ProxyText => $"SOCKS5 {SocksHost}:{SocksPort}";
     public bool HasProxy => !string.IsNullOrWhiteSpace(SocksHost) && SocksPort is >= 1 and <= 65535;
-    public string EndpointText => $"{ListenText} → {RemoteText} via {SocksHost}:{SocksPort}";
 
     private static string ReadString(JsonObject options, string name, string fallback)
     {

@@ -44,7 +44,6 @@ internal sealed class TunnelItem : INotifyPropertyChanged
 
     public bool IsSupported => TunnelKindRegistry.Find(Kind) is not null;
 
-    public string EndpointText => TryOptions()?.EndpointText ?? Kind;
     public string ListenText => TryOptions()?.ListenText ?? "";
     public string RemoteText => TryOptions()?.RemoteText ?? "";
     public string ProxyText => TryOptions()?.ProxyText ?? "";
@@ -103,7 +102,6 @@ internal sealed class TunnelItem : INotifyPropertyChanged
     {
         OnPropertyChanged(nameof(Name));
         OnPropertyChanged(nameof(Kind));
-        OnPropertyChanged(nameof(EndpointText));
         OnPropertyChanged(nameof(ListenText));
         OnPropertyChanged(nameof(RemoteText));
         OnPropertyChanged(nameof(ProxyText));
@@ -120,12 +118,7 @@ internal sealed class TunnelItem : INotifyPropertyChanged
             Status = next;
     }
 
-    public void SetRuntime(ITunnelRuntime? runtime)
-    {
-        _runtime = runtime;
-        if (runtime is null && Status is TunnelStatus.Starting or TunnelStatus.Running or TunnelStatus.Stopping)
-            Status = Enabled ? TunnelStatus.Failed : TunnelStatus.Stopped;
-    }
+    public void SetRuntime(ITunnelRuntime? runtime) => _runtime = runtime;
 
     public void Mark(TunnelStatus status)
     {

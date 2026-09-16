@@ -13,6 +13,7 @@ Built as a tray app in the same visual language as SSH Agent GUI.
 - **Live ncat log** — verbose output for the selected tunnel
 - **System tray** — minimize to the tray and keep hops running
 - **Single instance** — launching again brings the existing window forward
+- **Export / import** — pick tunnels and write or read a `*.tunnelman.json` file
 
 ## Requirements
 
@@ -39,11 +40,15 @@ If ncat is missing, browse to `ncat.exe` or install official Nmap (winget `Insec
 
 Settings and the tunnel session live under `%AppData%\Tunnelman\`.
 
+`*.tunnelman.json` exports are copy-only: they do not include enable state or `ui.json`. Imported tunnels stay off until you enable them.
+
 ## Usage
 
 | Action | How |
 | --- | --- |
 | Add a tunnel | **Add tunnel**, or `Ctrl+N` |
+| Export tunnels | **Export**, or `Ctrl+E` |
+| Import tunnels | **Import**, or `Ctrl+I` |
 | Start or stop | Flip the switch on the row |
 | Edit / delete | Row buttons on the right |
 | Hide the window | `Escape` (app stays in the tray) |

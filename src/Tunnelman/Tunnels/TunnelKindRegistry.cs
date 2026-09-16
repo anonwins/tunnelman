@@ -7,6 +7,8 @@ internal static class TunnelKindRegistry
         [TunnelKinds.NcatSocks] = new NcatSocksKind(),
     };
 
+    public static IEnumerable<ITunnelKind> All => Kinds.Values;
+
     public static ITunnelKind? Find(string? kind)
     {
         if (string.IsNullOrWhiteSpace(kind))

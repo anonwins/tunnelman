@@ -70,6 +70,27 @@ public sealed class TunnelStoreTests
     }
 
     [Fact]
+    public void Unsupported_version_is_corrupt()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "tunnelman-store-ver-" + Guid.NewGuid().ToString("n"));
+        Directory.CreateDirectory(dir);
+        var file = Path.Combine(dir, "tunnels.json");
+        File.WriteAllText(file, """{"version": 2, "tunnels": []}""");
+        try
+        {
+            var loaded = new TunnelStore(file).Load();
+            Assert.True(loaded.Corrupt);
+            Assert.Empty(loaded.Tunnels);
+            Assert.Contains("version", loaded.Error, StringComparison.OrdinalIgnoreCase);
+            Assert.True(File.Exists(file + ".bak"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Clear_writes_empty_list()
     {
         var dir = Path.Combine(Path.GetTempPath(), "tunnelman-store-clear-" + Guid.NewGuid().ToString("n"));

@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Threading;
+using Microsoft.Win32;
 using Tunnelman.Tunnels;
 
 namespace Tunnelman;
@@ -11,6 +12,8 @@ namespace Tunnelman;
 public partial class MainWindow : Window
 {
     public static readonly RoutedCommand AddTunnelCommand = new();
+    public static readonly RoutedCommand ExportCommand = new();
+    public static readonly RoutedCommand ImportCommand = new();
     public static readonly RoutedCommand HideCommand = new();
 
     private readonly TunnelSession _session;
@@ -25,7 +28,11 @@ public partial class MainWindow : Window
         InitializeComponent();
         LogCard.Visibility = TunnelList.SelectedItem is null ? Visibility.Collapsed : Visibility.Visible;
         CommandBindings.Add(new CommandBinding(AddTunnelCommand, (s, e) => OnAddClick(s, e)));
+        CommandBindings.Add(new CommandBinding(ExportCommand, (_, _) => OnExportClick(), (_, e) => e.CanExecute = _session.HasTunnels));
+        CommandBindings.Add(new CommandBinding(ImportCommand, (_, _) => OnImportClick()));
         CommandBindings.Add(new CommandBinding(HideCommand, (_, _) => HideToTray()));
+        _session.PropertyChanged += OnSessionPropertyChanged;
+        UpdateExportTip();
     }
 
     public void RestoreFromTray()
@@ -116,6 +123,57 @@ public partial class MainWindow : Window
 
         e.Cancel = true;
         _ = RequestExitAsync();
+    }
+
+    private void OnSessionPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(TunnelSession.HasTunnels) or null)
+        {
+            CommandManager.InvalidateRequerySuggested();
+            UpdateExportTip();
+        }
+    }
+
+    private void UpdateExportTip() =>
+        ExportButton.ToolTip = _session.HasTunnels ? null : "Nothing to export";
+
+    private void OnExportClick()
+    {
+        if (!_session.HasTunnels)
+            return;
+        var rows = TunnelTransfer.BuildExport(_session.SnapshotRecords());
+        var picker = new TransferWindow(export: true, rows, sourcePath: null, import: null)
+        {
+            Owner = IsVisible ? this : null,
+        };
+        if (picker.ShowDialog() == true)
+            _session.SetNotice(TunnelTransfer.CountLabel("Exported", picker.CompletedCount));
+    }
+
+    private void OnImportClick()
+    {
+        var open = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Import tunnels",
+            Filter = TunnelTransfer.FileFilter,
+            CheckFileExists = true,
+            Multiselect = false,
+        };
+        if (open.ShowDialog(IsVisible ? this : null) != true)
+            return;
+        if (!TunnelTransfer.TryRead(open.FileName, out var records, out var error))
+        {
+            MessageBox.Show(this, error, "Tunnelman", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var prepared = TunnelTransfer.PrepareImport(_session.SnapshotRecords(), records);
+        var picker = new TransferWindow(export: false, prepared, open.FileName, selected =>
+            _session.TryImport(selected, out _, out var saveError) ? null : saveError)
+        {
+            Owner = IsVisible ? this : null,
+        };
+        picker.ShowDialog();
     }
 
     private void OnAddClick(object sender, RoutedEventArgs e)

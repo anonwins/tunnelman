@@ -10,12 +10,13 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
 {
     private readonly TunnelStore _store;
     private readonly Dispatcher _dispatcher;
-    private readonly object _gate = new();
     private bool _disposed;
     private string _statusText = "Starting…";
     private string? _ncatPath;
     private bool _isNcatMissing = true;
     private string? _loadWarning;
+    private string? _saveError;
+    private string? _notice;
 
     public TunnelSession(TunnelStore? store = null, Dispatcher? dispatcher = null)
     {
@@ -67,21 +68,18 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
             _isNcatMissing = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(ShowNoTunnelsHint));
-            OnPropertyChanged(nameof(ShowNcatMissing));
-            OnPropertyChanged(nameof(ToolsReady));
+            OnPropertyChanged(nameof(ShowNcatSetupHint));
             OnPropertyChanged(nameof(ToolsStatusText));
         }
     }
 
-    public bool ToolsReady => !IsNcatMissing;
-
-    public string ToolsStatusText => ToolsReady ? "Status: OK" : "Status: Setup needed";
+    public string ToolsStatusText => IsNcatMissing ? "Status: Setup needed" : "Status: OK";
 
     public bool HasTunnels => Tunnels.Count > 0;
 
     public bool ShowNoTunnelsHint => !HasTunnels && !IsNcatMissing;
 
-    public bool ShowNcatMissing => IsNcatMissing;
+    public bool ShowNcatSetupHint => IsNcatMissing && !HasTunnels;
 
     public int RunningCount => Tunnels.Count(t => t.Status == TunnelStatus.Running);
 
@@ -98,8 +96,8 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
         _loadWarning = loaded.Corrupt
             ? "Previous session file was unreadable and was copied to tunnels.json.bak."
             : loaded.Error;
-        OnPropertyChanged(nameof(HasTunnels));
-        OnPropertyChanged(nameof(ShowNoTunnelsHint));
+        _notice = null;
+        NotifyListFlags();
         RefreshSummary();
     }
 
@@ -137,10 +135,18 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
         if (!TryValidate(record, ignoreId: null, out error))
             return false;
 
-        Tunnels.Add(CreateItem(record));
-        Persist();
-        OnPropertyChanged(nameof(HasTunnels));
-        OnPropertyChanged(nameof(ShowNoTunnelsHint));
+        var item = CreateItem(record);
+        Tunnels.Add(item);
+        if (!Persist())
+        {
+            Tunnels.Remove(item);
+            error = "Could not save the session.";
+            NotifyListFlags();
+            RefreshSummary();
+            return false;
+        }
+
+        NotifyListFlags();
         RefreshSummary();
         return true;
     }
@@ -158,7 +164,14 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
         item.Record.Kind = next.Kind;
         item.Record.Options = next.Options;
         item.RefreshIdentity();
-        Persist();
+        if (!Persist())
+        {
+            error = "Could not save the session.";
+            RefreshSummary();
+            return false;
+        }
+
+        RefreshSummary();
         return true;
     }
 
@@ -170,6 +183,7 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
             return;
         await StopItemAsync(item).ConfigureAwait(true);
         await StartItemAsync(item).ConfigureAwait(true);
+        RefreshSummary();
     }
 
     public async Task DeleteAsync(TunnelItem item)
@@ -177,8 +191,7 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
         await StopItemAsync(item).ConfigureAwait(true);
         Tunnels.Remove(item);
         Persist();
-        OnPropertyChanged(nameof(HasTunnels));
-        OnPropertyChanged(nameof(ShowNoTunnelsHint));
+        NotifyListFlags();
         RefreshSummary();
     }
 
@@ -208,21 +221,64 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
         Tunnels.Clear();
         _store.Clear();
         _loadWarning = null;
-        OnPropertyChanged(nameof(HasTunnels));
-        OnPropertyChanged(nameof(ShowNoTunnelsHint));
+        _saveError = null;
+        _notice = null;
+        NotifyListFlags();
         RefreshSummary();
     }
 
-    public void Persist()
+    public IReadOnlyList<TunnelRecord> SnapshotRecords()
     {
-        try
+        var copies = new List<TunnelRecord>(Tunnels.Count);
+        foreach (var item in Tunnels)
         {
-            _store.Save(Tunnels.Select(t => t.Record));
+            var copy = item.Record.Clone();
+            copy.Enabled = false;
+            copies.Add(copy);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+
+        return copies;
+    }
+
+    public bool TryImport(IReadOnlyList<TunnelRecord> records, out int added, out string error)
+    {
+        added = 0;
+        error = "";
+        if (records.Count == 0)
+            return true;
+
+        var items = new List<TunnelItem>(records.Count);
+        foreach (var incoming in records)
         {
-            StatusText = "Could not save the session.";
+            var record = incoming.Clone();
+            record.Id = Guid.NewGuid();
+            record.Enabled = false;
+            items.Add(CreateItem(record));
         }
+
+        foreach (var item in items)
+            Tunnels.Add(item);
+
+        if (!Persist())
+        {
+            foreach (var item in items)
+                Tunnels.Remove(item);
+            error = "Could not save the session.";
+            NotifyListFlags();
+            RefreshSummary();
+            return false;
+        }
+
+        added = items.Count;
+        NotifyListFlags();
+        SetNotice(TunnelTransfer.CountLabel("Imported", added));
+        return true;
+    }
+
+    public void SetNotice(string text)
+    {
+        _notice = text;
+        RefreshSummary();
     }
 
     public void Dispose()
@@ -232,6 +288,23 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
         _disposed = true;
         foreach (var item in Tunnels)
             item.Runtime?.Dispose();
+    }
+
+    private bool Persist()
+    {
+        try
+        {
+            _store.Save(Tunnels.Select(t => t.Record));
+            _saveError = null;
+            _loadWarning = null;
+            _notice = null;
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _saveError = "Could not save the session.";
+            return false;
+        }
     }
 
     private TunnelItem CreateItem(TunnelRecord record)
@@ -296,7 +369,6 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
         var runtime = item.Runtime;
         if (runtime is null)
         {
-            item.Mark(item.Enabled ? item.Status : TunnelStatus.Stopped);
             if (!item.Enabled)
                 item.Mark(TunnelStatus.Stopped);
             return;
@@ -315,9 +387,8 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
         {
             runtime.Dispose();
             item.SetRuntime(null);
-            item.SetBusy(false, item.Enabled ? TunnelStatus.Failed : TunnelStatus.Stopped);
-            if (!item.Enabled)
-                item.Mark(TunnelStatus.Stopped);
+            item.SetBusy(false);
+            MarkIdle(item);
         }
     }
 
@@ -337,7 +408,7 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
                 return;
             item.AppendLog($"Process ended ({code}).");
             item.SetRuntime(null);
-            item.Mark(item.Enabled ? TunnelStatus.Failed : TunnelStatus.Stopped);
+            MarkIdle(item);
             RefreshSummary();
         }
 
@@ -354,6 +425,9 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
         item.SetRuntime(null);
         item.Mark(TunnelStatus.Failed);
     }
+
+    private static void MarkIdle(TunnelItem item) =>
+        item.Mark(item.Enabled ? TunnelStatus.Failed : TunnelStatus.Stopped);
 
     internal bool TryValidate(TunnelRecord record, Guid? ignoreId, out string error)
     {
@@ -388,15 +462,14 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
         if (record.Kind == TunnelKinds.NcatSocks
             && NcatSocksOptions.TryParse(record.Options, out var options, out _))
         {
-            var key = $"{options.ListenAddress.Trim()}:{options.ListenPort}";
+            var key = options.ListenKey;
             foreach (var other in Tunnels)
             {
                 if (other.Id == ignoreId || other.Kind != TunnelKinds.NcatSocks)
                     continue;
                 if (!NcatSocksOptions.TryParse(other.Record.Options, out var existing, out _))
                     continue;
-                if ($"{existing.ListenAddress.Trim()}:{existing.ListenPort}"
-                    .Equals(key, StringComparison.OrdinalIgnoreCase))
+                if (existing.ListenKey.Equals(key, StringComparison.OrdinalIgnoreCase))
                 {
                     error = "Another tunnel already uses this listen address and port.";
                     return false;
@@ -412,6 +485,18 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
     {
         OnPropertyChanged(nameof(RunningCount));
         OnPropertyChanged(nameof(RunningCountText));
+        if (!string.IsNullOrWhiteSpace(_saveError))
+        {
+            StatusText = _saveError;
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_notice))
+        {
+            StatusText = _notice;
+            return;
+        }
+
         if (!string.IsNullOrWhiteSpace(_loadWarning))
         {
             StatusText = _loadWarning;
@@ -425,6 +510,13 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
         }
 
         StatusText = $"{RunningCount} of {Tunnels.Count} running";
+    }
+
+    private void NotifyListFlags()
+    {
+        OnPropertyChanged(nameof(HasTunnels));
+        OnPropertyChanged(nameof(ShowNoTunnelsHint));
+        OnPropertyChanged(nameof(ShowNcatSetupHint));
     }
 
     private void OnPropertyChanged([CallerMemberName] string? name = null) =>

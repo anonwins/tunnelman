@@ -1,0 +1,152 @@
+<Window x:Class="Tunnelman.TransferWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Tunnelman"
+        Title="Export tunnels"
+        Width="580"
+        Height="540"
+        MinWidth="520"
+        MinHeight="420"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResize"
+        ShowInTaskbar="False"
+        Background="{StaticResource BgBrush}"
+        Foreground="{StaticResource TextBrush}"
+        FontFamily="Segoe UI"
+        UseLayoutRounding="True"
+        SourceInitialized="OnSourceInitialized"
+        Loaded="OnLoaded">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,16">
+            <TextBlock x:Name="HeadingText" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+            <TextBlock x:Name="BodyText" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"/>
+        </StackPanel>
+
+        <Border Grid.Row="1" Height="28" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+            <Grid Margin="10,0,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center"
+                            PreviewMouseLeftButtonDown="OnAllPreview">
+                    <CheckBox x:Name="AllBox"
+                              Style="{StaticResource PickerCheck}"
+                              IsThreeState="True"
+                              VerticalAlignment="Center"
+                              IsHitTestVisible="False"
+                              PreviewKeyDown="OnAllKeyDown"/>
+                    <TextBlock Text="All" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                </StackPanel>
+                <TextBlock x:Name="CountText"
+                           Grid.Column="1"
+                           Text="None selected"
+                           Foreground="{StaticResource MutedBrush}"
+                           FontSize="12"
+                           HorizontalAlignment="Right"
+                           VerticalAlignment="Center"/>
+            </Grid>
+        </Border>
+
+        <ListBox x:Name="EntryList"
+                 Grid.Row="2"
+                 Background="Transparent"
+                 BorderThickness="0"
+                 Padding="0"
+                 SelectionMode="Single"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                 PreviewMouseLeftButtonDown="OnRowPreview"
+                 PreviewKeyDown="OnListKeyDown">
+            <ListBox.ItemTemplate>
+                <DataTemplate DataType="{x:Type local:TransferRow}">
+                    <Border Padding="10,8" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1"
+                            Opacity="{Binding RowOpacity}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <CheckBox Style="{StaticResource PickerCheck}"
+                                      IsChecked="{Binding IsChecked, Mode=TwoWay}"
+                                      Focusable="False"
+                                      IsTabStop="False"
+                                      VerticalAlignment="Center"
+                                      Margin="0,0,8,0"
+                                      AutomationProperties.Name="{Binding DisplayName}"/>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold"
+                                           TextTrimming="CharacterEllipsis"/>
+                                <local:PackLeftPanel Margin="0,4,0,0"
+                                                     Visibility="{Binding ShowEndpoints, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="{Binding ListenText}"
+                                               Foreground="{StaticResource MutedBrush}"
+                                               FontFamily="Cascadia Mono, Consolas"
+                                               FontSize="11"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock Text="&#xE76C;"
+                                               FontFamily="Segoe MDL2 Assets"
+                                               FontSize="10"
+                                               VerticalAlignment="Center"
+                                               HorizontalAlignment="Center"
+                                               Foreground="{StaticResource MutedBrush}"
+                                               Margin="6,0"/>
+                                    <TextBlock local:PackLeftPanel.IsFill="True"
+                                               Text="{Binding RemoteText}"
+                                               Foreground="{StaticResource MutedBrush}"
+                                               FontFamily="Cascadia Mono, Consolas"
+                                               FontSize="11"
+                                               VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis"/>
+                                </local:PackLeftPanel>
+                                <TextBlock Text="{Binding Note}"
+                                           Foreground="{StaticResource MutedBrush}"
+                                           FontSize="11"
+                                           Margin="0,4,0,0"
+                                           TextTrimming="CharacterEllipsis"
+                                           Visibility="{Binding HasNote, Converter={StaticResource BoolToVis}}"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+
+        <Grid Grid.Row="3" Margin="0,20,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="FileNameText"
+                       VerticalAlignment="Center"
+                       Foreground="{StaticResource MutedBrush}"
+                       FontSize="12"
+                       TextTrimming="CharacterEllipsis"
+                       Margin="0,0,12,0"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <Button IsCancel="True" MinWidth="96" Margin="0,0,8,0">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE711;"/>
+                        <TextBlock Text="Cancel" Margin="8,0,0,0" VerticalAlignment="Center"
+                                   Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                    </StackPanel>
+                </Button>
+                <Button x:Name="PrimaryButton" Style="{StaticResource PrimaryButton}"
+                        IsDefault="True" MinWidth="96" Click="OnPrimaryClick">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock x:Name="PrimaryGlyph" Style="{StaticResource Glyph}" Text="&#xEDE1;"/>
+                        <TextBlock x:Name="PrimaryLabel" Text="Export tunnels" Margin="8,0,0,0" VerticalAlignment="Center"
+                                   Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

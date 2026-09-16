@@ -104,8 +104,6 @@ internal sealed class NcatSocksRuntime : ITunnelRuntime
         lock (_gate)
             stopping = _stopping;
 
-        if (!stopping)
-            _log?.Invoke($"ncat exited with code {code}.");
         _started?.TrySetException(new InvalidOperationException($"ncat exited with code {code}."));
         if (!stopping)
             Exited?.Invoke(code);

@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using System.Windows;
+using System.Windows.Controls;
 using Tunnelman.Tunnels;
 
 namespace Tunnelman;
@@ -13,6 +14,7 @@ public partial class EditTunnelWindow : Window
     internal EditTunnelWindow(TunnelItem? existing)
     {
         InitializeComponent();
+        FillKinds(existing?.Kind);
         var options = NcatSocksOptions.Defaults();
         if (existing is not null)
         {
@@ -35,6 +37,21 @@ public partial class EditTunnelWindow : Window
     public string TunnelName { get; private set; } = "";
     public string Kind { get; private set; } = TunnelKinds.NcatSocks;
     public JsonObject? Options { get; private set; }
+
+    private void FillKinds(string? selectedKind)
+    {
+        KindBox.Items.Clear();
+        ComboBoxItem? selected = null;
+        foreach (var kind in TunnelKindRegistry.All)
+        {
+            var item = new ComboBoxItem { Content = kind.DisplayName, Tag = kind.Kind };
+            KindBox.Items.Add(item);
+            if (kind.Kind == selectedKind)
+                selected = item;
+        }
+
+        KindBox.SelectedItem = selected ?? KindBox.Items.OfType<ComboBoxItem>().FirstOrDefault();
+    }
 
     private void OnSourceInitialized(object? sender, EventArgs e) => TitleBarDarkMode.Apply(this);
 
