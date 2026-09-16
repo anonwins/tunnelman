@@ -66,26 +66,19 @@ internal static class NcatResolver
 
     internal static IEnumerable<string> Candidates(NcatResolveContext context)
     {
-        if (!string.IsNullOrWhiteSpace(context.ConfiguredPath))
-            yield return Path.GetFullPath(context.ConfiguredPath);
+        if (!string.IsNullOrWhiteSpace(context.ConfiguredPath)
+            && TryFullPath(context.ConfiguredPath, out var configured))
+            yield return configured;
 
-        var adjacent = Path.Combine(context.AppDirectory, "ncat.exe");
-        yield return Path.GetFullPath(adjacent);
+        if (TryFullPath(Path.Combine(context.AppDirectory, "ncat.exe"), out var adjacent))
+            yield return adjacent;
 
         if (!string.IsNullOrWhiteSpace(context.PathEnvironment))
         {
             foreach (var dir in context.PathEnvironment.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
             {
-                string combined;
-                try
-                {
-                    combined = Path.GetFullPath(Path.Combine(dir.Trim(), "ncat.exe"));
-                }
-                catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-                {
+                if (!TryFullPath(Path.Combine(dir.Trim(), "ncat.exe"), out var combined))
                     continue;
-                }
-
                 yield return combined;
             }
         }
@@ -94,17 +87,29 @@ internal static class NcatResolver
         {
             if (string.IsNullOrWhiteSpace(known))
                 continue;
-            string full;
-            try
-            {
-                full = Path.GetFullPath(known);
-            }
-            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-            {
+            if (!TryFullPath(known, out var full))
                 continue;
+            yield return full;
+        }
+    }
+
+    private static bool TryFullPath(string path, out string full)
+    {
+        try
+        {
+            if (path.IndexOfAny(Path.GetInvalidPathChars()) >= 0)
+            {
+                full = "";
+                return false;
             }
 
-            yield return full;
+            full = Path.GetFullPath(path);
+            return true;
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            full = "";
+            return false;
         }
     }
 

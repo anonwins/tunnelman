@@ -98,29 +98,61 @@ internal sealed class NcatSocksRuntime : ITunnelRuntime
             _started?.TrySetResult(true);
     }
 
+    internal void SimulateExited(int code) => OnExited(code);
+
+    internal TaskCompletionSource<bool> ArmStartedForTests()
+    {
+        var started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_gate)
+            _started = started;
+        return started;
+    }
+
+    internal void MarkStoppingForTests()
+    {
+        lock (_gate)
+            _stopping = true;
+    }
+
+    internal void CleanupForTests() => Cleanup(dispose: true);
+
+    internal void AttachJobForTests(JobProcess job)
+    {
+        lock (_gate)
+            _job = job;
+    }
+
     private void OnExited(int code)
     {
         bool stopping;
+        TaskCompletionSource<bool>? started;
         lock (_gate)
+        {
             stopping = _stopping;
+            started = _started;
+        }
 
-        _started?.TrySetException(new InvalidOperationException($"ncat exited with code {code}."));
-        if (!stopping)
-            Exited?.Invoke(code);
+        started?.TrySetException(new InvalidOperationException($"ncat exited with code {code}."));
+        if (stopping)
+            return;
+        Exited?.Invoke(code);
         Cleanup(dispose: true);
     }
 
     private void Cleanup(bool dispose)
     {
         JobProcess? job;
+        TaskCompletionSource<bool>? started;
         lock (_gate)
         {
             job = _job;
+            started = _started;
             _job = null;
             _log = null;
             _started = null;
         }
 
+        started?.TrySetCanceled();
         if (job is null)
             return;
         job.LineReceived -= OnLine;

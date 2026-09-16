@@ -3,7 +3,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
-using Microsoft.Win32;
 using Tunnelman.Tunnels;
 
 namespace Tunnelman;
@@ -12,27 +11,30 @@ public partial class TransferWindow : Window
 {
     private readonly bool _export;
     private readonly List<TransferRow> _rows;
-    private readonly string? _sourcePath;
+    private readonly IReadOnlyList<TunnelRecord> _existing;
     private readonly Func<IReadOnlyList<TunnelRecord>, string?>? _import;
     private bool _syncingAll;
     private bool _committing;
+    private bool _focused;
     private int _lastToggled = -1;
 
     public TransferWindow()
     {
         InitializeComponent();
         _rows = [];
+        _existing = [];
     }
 
     internal TransferWindow(
         bool export,
         IReadOnlyList<TransferEntry> entries,
+        IReadOnlyList<TunnelRecord> existing,
         string? sourcePath,
         Func<IReadOnlyList<TunnelRecord>, string?>? import)
         : this()
     {
         _export = export;
-        _sourcePath = sourcePath;
+        _existing = existing;
         _import = import;
         _rows = entries.Select(e => new TransferRow(e)).ToList();
         foreach (var row in _rows)
@@ -60,29 +62,39 @@ public partial class TransferWindow : Window
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        void FocusFirst()
-        {
-            if (EntryList.ItemContainerGenerator.Status != System.Windows.Controls.Primitives.GeneratorStatus.ContainersGenerated)
-                return;
-            EntryList.Focus();
-            if (EntryList.Items.Count > 0)
-            {
-                EntryList.SelectedIndex = 0;
-                if (EntryList.ItemContainerGenerator.ContainerFromIndex(0) is ListBoxItem item)
-                    item.Focus();
-            }
-        }
-
         if (EntryList.ItemContainerGenerator.Status == System.Windows.Controls.Primitives.GeneratorStatus.ContainersGenerated)
             Dispatcher.BeginInvoke(FocusFirst, DispatcherPriority.Loaded);
         else
-            EntryList.ItemContainerGenerator.StatusChanged += (_, _) => FocusFirst();
+            EntryList.ItemContainerGenerator.StatusChanged += OnGeneratorStatusChanged;
+    }
+
+    private void OnGeneratorStatusChanged(object? sender, EventArgs e) => FocusFirst();
+
+    private void FocusFirst()
+    {
+        if (_focused)
+            return;
+        if (EntryList.ItemContainerGenerator.Status != System.Windows.Controls.Primitives.GeneratorStatus.ContainersGenerated)
+            return;
+
+        EntryList.ItemContainerGenerator.StatusChanged -= OnGeneratorStatusChanged;
+        _focused = true;
+        EntryList.Focus();
+        if (EntryList.Items.Count > 0)
+        {
+            EntryList.SelectedIndex = 0;
+            if (EntryList.ItemContainerGenerator.ContainerFromIndex(0) is ListBoxItem item)
+                item.Focus();
+        }
     }
 
     private void OnRowPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(TransferRow.IsChecked))
-            SyncChrome();
+        if (e.PropertyName != nameof(TransferRow.IsChecked))
+            return;
+        if (!_syncingAll && sender is TransferRow row)
+            _lastToggled = _rows.IndexOf(row);
+        SyncChrome();
     }
 
     private void OnAllPreview(object sender, MouseButtonEventArgs e)
@@ -107,8 +119,17 @@ public partial class TransferWindow : Window
         if (selectable.Count == 0)
             return;
         var allOn = selectable.All(r => r.IsChecked);
-        foreach (var row in selectable)
-            row.IsChecked = !allOn;
+        _syncingAll = true;
+        try
+        {
+            foreach (var row in selectable)
+                row.IsChecked = !allOn;
+        }
+        finally
+        {
+            _syncingAll = false;
+        }
+
         SyncChrome();
     }
 
@@ -161,46 +182,65 @@ public partial class TransferWindow : Window
 
         if (e.Key == Key.A && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
         {
-            foreach (var row in Selectable())
-                row.IsChecked = true;
-            SyncChrome();
+            SetAll(true);
             e.Handled = true;
             return;
         }
 
         if (e.Key == Key.D && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
         {
-            foreach (var row in Selectable())
-                row.IsChecked = false;
-            SyncChrome();
+            SetAll(false);
             e.Handled = true;
         }
     }
 
-    private void OnPrimaryClick(object sender, RoutedEventArgs e)
+    private void SetAll(bool value)
     {
-        if (_committing)
-            return;
-        _committing = true;
-        var wasDefault = PrimaryButton.IsDefault;
-        PrimaryButton.IsDefault = false;
+        _syncingAll = true;
         try
         {
-            var selected = _rows.Where(r => r.CanSelect && r.IsChecked).Select(r => r.Entry.Record).ToList();
-            if (selected.Count == 0)
+            foreach (var row in Selectable())
+                row.IsChecked = value;
+        }
+        finally
+        {
+            _syncingAll = false;
+        }
+
+        SyncChrome();
+    }
+
+    private void OnPrimaryClick(object sender, RoutedEventArgs e)
+    {
+        if (!DialogCommit.TryBegin(PrimaryButton, ref _committing))
+            return;
+        try
+        {
+            var checkedRows = _rows.Where(r => r.CanSelect && r.IsChecked).ToList();
+            if (checkedRows.Count == 0)
                 return;
+
+            IReadOnlyList<TunnelRecord> selected;
             if (_export)
             {
+                selected = checkedRows.Select(r => r.Entry.Record).ToList();
                 if (!TryExport(selected))
                     return;
             }
-            else if (_import is not null)
+            else
             {
-                var error = _import(selected);
-                if (error is not null)
-                {
-                    MessageBox.Show(this, error, "Tunnelman", MessageBoxButton.OK, MessageBoxImage.Warning);
+                var remapped = TunnelTransfer.PrepareImport(_existing, checkedRows.Select(r => r.Entry.Source));
+                selected = remapped.Where(r => r.CanSelect).Select(r => r.Record).ToList();
+                if (selected.Count == 0)
                     return;
+                if (_import is not null)
+                {
+                    var error = _import(selected);
+                    if (error is not null)
+                    {
+                        MessageBox.Show(this, error, "Tunnelman", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        return;
+                    }
                 }
             }
 
@@ -209,8 +249,7 @@ public partial class TransferWindow : Window
         }
         finally
         {
-            PrimaryButton.IsDefault = wasDefault;
-            _committing = false;
+            DialogCommit.End(PrimaryButton, () => _committing = false);
         }
     }
 
@@ -228,9 +267,28 @@ public partial class TransferWindow : Window
         if (dialog.ShowDialog(this) != true)
             return false;
 
+        var path = TunnelTransfer.NormalizeExportPath(dialog.FileName);
+        if (TunnelTransfer.IsReservedSessionPath(path))
+        {
+            MessageBox.Show(this, TunnelTransfer.ReservedPath, "Tunnelman", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
+        }
+
+        if (!path.Equals(dialog.FileName, StringComparison.OrdinalIgnoreCase) && File.Exists(path))
+        {
+            var overwrite = MessageBox.Show(
+                this,
+                $"Replace {Path.GetFileName(path)}?",
+                "Tunnelman",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            if (overwrite != MessageBoxResult.Yes)
+                return false;
+        }
+
         try
         {
-            TunnelTransfer.Write(TunnelTransfer.NormalizeExportPath(dialog.FileName), selected);
+            TunnelTransfer.Write(path, selected);
             return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

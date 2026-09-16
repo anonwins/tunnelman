@@ -27,35 +27,99 @@ internal sealed class JobProcess : IDisposable
 
     public void Start(ProcessStartInfo startInfo)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        var job = IntPtr.Zero;
+        System.Diagnostics.Process? process = null;
         lock (_gate)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             if (_process is { HasExited: false })
                 throw new InvalidOperationException("Process is already running.");
 
-            var process = new System.Diagnostics.Process { StartInfo = startInfo, EnableRaisingEvents = true };
-            process.OutputDataReceived += OnData;
-            process.ErrorDataReceived += OnData;
-            process.Exited += OnExited;
-            if (!process.Start())
-            {
-                process.Dispose();
-                throw new InvalidOperationException("Failed to start process.");
-            }
-
             try
             {
-                process.StandardInput.Close();
-            }
-            catch (IOException)
-            {
-            }
+                job = CreateJobObject(IntPtr.Zero, null);
+                if (job == IntPtr.Zero)
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not create a job object.");
 
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-            _process = process;
-            AssignJob(process);
+                var info = new JobObjectExtendedLimitInformation
+                {
+                    BasicLimitInformation = new JobObjectBasicLimitInformation
+                    {
+                        LimitFlags = JobObjectLimitKillOnJobClose,
+                    },
+                };
+                var length = Marshal.SizeOf<JobObjectExtendedLimitInformation>();
+                var ptr = Marshal.AllocHGlobal(length);
+                try
+                {
+                    Marshal.StructureToPtr(info, ptr, fDeleteOld: false);
+                    if (!SetInformationJobObject(job, JobObjectExtendedLimitInformationClass, ptr, (uint)length))
+                        throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not configure the job object.");
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(ptr);
+                }
+
+                process = new System.Diagnostics.Process { StartInfo = startInfo, EnableRaisingEvents = true };
+                process.OutputDataReceived += OnData;
+                process.ErrorDataReceived += OnData;
+                process.Exited += OnExited;
+                if (!process.Start())
+                {
+                    process.Dispose();
+                    process = null;
+                    throw new InvalidOperationException("Failed to start process.");
+                }
+
+                if (process.HasExited)
+                {
+                    var code = TryExitCode(process);
+                    process.Dispose();
+                    process = null;
+                    throw new InvalidOperationException($"ncat exited with code {code}.");
+                }
+
+                if (!AssignProcessToJobObject(job, process.Handle))
+                {
+                    var error = Marshal.GetLastWin32Error();
+                    if (process.HasExited)
+                    {
+                        var code = TryExitCode(process);
+                        process.Dispose();
+                        process = null;
+                        throw new InvalidOperationException($"ncat exited with code {code}.");
+                    }
+
+                    TryKill(process);
+                    process.Dispose();
+                    process = null;
+                    throw new Win32Exception(error, "Could not assign ncat to a job object.");
+                }
+
+                Interlocked.Exchange(ref _job, job);
+                job = IntPtr.Zero;
+                _process = process;
+                process = null;
+            }
+            finally
+            {
+                if (job != IntPtr.Zero)
+                    CloseHandle(job);
+                process?.Dispose();
+            }
         }
+
+        try
+        {
+            _process?.StandardInput.Close();
+        }
+        catch (IOException)
+        {
+        }
+
+        _process?.BeginOutputReadLine();
+        _process?.BeginErrorReadLine();
     }
 
     public async Task StopAsync()
@@ -83,78 +147,43 @@ internal sealed class JobProcess : IDisposable
         catch (OperationCanceledException)
         {
         }
+        catch (ObjectDisposedException)
+        {
+        }
 
         CloseJob();
     }
 
     public void Dispose()
     {
-        if (_disposed)
-            return;
-        _disposed = true;
         System.Diagnostics.Process? process;
         lock (_gate)
         {
+            if (_disposed)
+                return;
+            _disposed = true;
             process = _process;
             _process = null;
         }
 
-        TryKill(process);
-        process?.Dispose();
+        if (process is not null)
+        {
+            process.Exited -= OnExited;
+            process.OutputDataReceived -= OnData;
+            process.ErrorDataReceived -= OnData;
+            TryKill(process);
+            process.Dispose();
+        }
+
         CloseJob();
-    }
-
-    private void AssignJob(System.Diagnostics.Process process)
-    {
-        try
-        {
-            var job = CreateJobObject(IntPtr.Zero, null);
-            if (job == IntPtr.Zero)
-                return;
-
-            var info = new JobObjectExtendedLimitInformation
-            {
-                BasicLimitInformation = new JobObjectBasicLimitInformation
-                {
-                    LimitFlags = JobObjectLimitKillOnJobClose,
-                },
-            };
-            var length = Marshal.SizeOf<JobObjectExtendedLimitInformation>();
-            var ptr = Marshal.AllocHGlobal(length);
-            try
-            {
-                Marshal.StructureToPtr(info, ptr, fDeleteOld: false);
-                if (!SetInformationJobObject(job, JobObjectExtendedLimitInformationClass, ptr, (uint)length))
-                {
-                    CloseHandle(job);
-                    return;
-                }
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(ptr);
-            }
-
-            if (!AssignProcessToJobObject(job, process.Handle))
-            {
-                CloseHandle(job);
-                return;
-            }
-
-            _job = job;
-        }
-        catch (Win32Exception)
-        {
-            // fall back to Kill(entireProcessTree)
-        }
     }
 
     private void CloseJob()
     {
-        if (_job == IntPtr.Zero)
+        var job = Interlocked.Exchange(ref _job, IntPtr.Zero);
+        if (job == IntPtr.Zero)
             return;
-        CloseHandle(_job);
-        _job = IntPtr.Zero;
+        CloseHandle(job);
     }
 
     private void OnData(object sender, DataReceivedEventArgs e)
@@ -170,18 +199,22 @@ internal sealed class JobProcess : IDisposable
         lock (_gate)
         {
             if (_process is not null)
-            {
-                try
-                {
-                    code = _process.ExitCode;
-                }
-                catch (InvalidOperationException)
-                {
-                }
-            }
+                code = TryExitCode(_process);
         }
 
         Exited?.Invoke(code);
+    }
+
+    private static int TryExitCode(System.Diagnostics.Process process)
+    {
+        try
+        {
+            return process.ExitCode;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
+        {
+            return 1;
+        }
     }
 
     private static void TryKill(System.Diagnostics.Process? process)
@@ -193,10 +226,7 @@ internal sealed class JobProcess : IDisposable
             if (!process.HasExited)
                 process.Kill(entireProcessTree: true);
         }
-        catch (InvalidOperationException)
-        {
-        }
-        catch (Win32Exception)
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException or Win32Exception)
         {
         }
     }

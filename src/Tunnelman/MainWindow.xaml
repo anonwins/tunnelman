@@ -148,10 +148,12 @@
                                                    ToolTip="{Binding ProxyText}"
                                                    Visibility="{Binding HasProxy, Converter={StaticResource BoolToVis}}"/>
                                         <Button Style="{StaticResource RowButton}" Click="OnEditClick"
+                                                IsEnabled="{Binding CanMutate}"
                                                 ToolTip="Edit" Margin="0,0,6,0">
                                             <TextBlock Style="{StaticResource GlyphSmall}" Text="&#xE70F;"/>
                                         </Button>
                                         <Button Style="{StaticResource RowDangerButton}" Click="OnDeleteClick"
+                                                IsEnabled="{Binding CanMutate}"
                                                 ToolTip="Delete">
                                             <TextBlock Style="{StaticResource GlyphSmall}" Text="&#xE74D;"/>
                                         </Button>

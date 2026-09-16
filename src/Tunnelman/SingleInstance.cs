@@ -1,9 +1,11 @@
+using System.Security.Principal;
+
 namespace Tunnelman;
 
 internal sealed class SingleInstance : IDisposable
 {
-    public const string MutexName = @"Local\Tunnelman.SingleInstance";
-    public const string EventName = @"Local\Tunnelman.ShowWindow";
+    public const string MutexNamePrefix = "Tunnelman.SingleInstance";
+    public const string EventNamePrefix = "Tunnelman.ShowWindow";
 
     private readonly Mutex _mutex;
     private readonly EventWaitHandle _showEvent;
@@ -13,35 +15,106 @@ internal sealed class SingleInstance : IDisposable
 
     public event Action? ShowRequested;
 
-    private SingleInstance(Mutex mutex)
+    private SingleInstance(Mutex mutex, EventWaitHandle showEvent)
     {
         _mutex = mutex;
-        _showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, EventName);
+        _showEvent = showEvent;
         _waitTask = Task.Run(WaitLoop);
     }
 
     public static bool TryStart(out SingleInstance? instance)
     {
-        var mutex = new Mutex(initiallyOwned: true, MutexName, out var created);
-        if (!created)
+        instance = null;
+        var sid = WindowsIdentity.GetCurrent().User?.Value;
+        if (string.IsNullOrWhiteSpace(sid))
+            return TryAcquire("Local", Environment.MachineName, out instance, out _);
+
+        if (TryAcquire("Global", sid, out instance, out var fallback) && instance is not null)
+            return true;
+        if (!fallback)
+            return false;
+        return TryAcquire("Local", sid, out instance, out _);
+    }
+
+    private static bool TryAcquire(string scope, string suffix, out SingleInstance? instance, out bool canFallback)
+    {
+        instance = null;
+        canFallback = false;
+        var mutexName = $@"{scope}\{MutexNamePrefix}.{suffix}";
+        var eventName = $@"{scope}\{EventNamePrefix}.{suffix}";
+        Mutex? mutex = null;
+        try
         {
-            mutex.Dispose();
+            mutex = new Mutex(initiallyOwned: true, mutexName, out var created);
+            if (!created)
+            {
+                mutex.Dispose();
+                mutex = null;
+                TrySignal(eventName);
+                return false;
+            }
+
+            EventWaitHandle showEvent;
             try
             {
-                using var ev = new EventWaitHandle(false, EventResetMode.AutoReset, EventName);
-                ev.Set();
+                showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, eventName);
             }
-            catch (Exception ex) when (ex is WaitHandleCannotBeOpenedException or UnauthorizedAccessException or IOException)
+            catch
             {
-                // ignore
+                try
+                {
+                    mutex.ReleaseMutex();
+                }
+                catch (ApplicationException)
+                {
+                }
+
+                mutex.Dispose();
+                mutex = null;
+                throw;
             }
 
-            instance = null;
+            instance = new SingleInstance(mutex, showEvent);
+            mutex = null;
+            return true;
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            TrySignal(eventName);
             return false;
         }
+        catch (Exception ex) when (ex is WaitHandleCannotBeOpenedException or ArgumentException)
+        {
+            canFallback = true;
+            return false;
+        }
+        finally
+        {
+            if (mutex is not null)
+            {
+                try
+                {
+                    mutex.ReleaseMutex();
+                }
+                catch (ApplicationException)
+                {
+                }
 
-        instance = new SingleInstance(mutex);
-        return true;
+                mutex.Dispose();
+            }
+        }
+    }
+
+    private static void TrySignal(string eventName)
+    {
+        try
+        {
+            using var ev = new EventWaitHandle(false, EventResetMode.AutoReset, eventName);
+            ev.Set();
+        }
+        catch (Exception ex) when (ex is WaitHandleCannotBeOpenedException or UnauthorizedAccessException or IOException)
+        {
+        }
     }
 
     private void WaitLoop()
@@ -56,7 +129,6 @@ internal sealed class SingleInstance : IDisposable
         }
         catch (ObjectDisposedException)
         {
-            // shutting down
         }
     }
 
@@ -72,7 +144,6 @@ internal sealed class SingleInstance : IDisposable
         }
         catch (AggregateException)
         {
-            // ignored
         }
 
         _showEvent.Dispose();
@@ -82,7 +153,6 @@ internal sealed class SingleInstance : IDisposable
         }
         catch (ApplicationException)
         {
-            // not owned
         }
 
         _mutex.Dispose();

@@ -40,7 +40,7 @@ public partial class MainWindow : Window
         Show();
         ShowInTaskbar = true;
         if (WindowState == WindowState.Minimized)
-            WindowState = WindowState.Normal;
+            WindowState = UiSettings.Current.Maximized ? WindowState.Maximized : WindowState.Normal;
         Activate();
         Topmost = true;
         Topmost = false;
@@ -49,7 +49,6 @@ public partial class MainWindow : Window
     public void HideToTray()
     {
         SaveUi();
-        WindowState = WindowState.Normal;
         Hide();
         ShowInTaskbar = false;
     }
@@ -71,14 +70,29 @@ public partial class MainWindow : Window
         _exitPromptOpen = true;
         try
         {
-            var dialog = new ExitConfirmWindow { Owner = IsVisible ? this : null };
+            var dialog = new ExitConfirmWindow();
+            if (IsVisible)
+            {
+                dialog.Owner = this;
+            }
+            else
+            {
+                dialog.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+                dialog.ShowInTaskbar = true;
+            }
+
             if (dialog.ShowDialog() != true)
                 return;
 
             if (dialog.ClearSession)
-                await _session.ClearSessionAsync().ConfigureAwait(true);
+            {
+                if (!await _session.ClearSessionAsync().ConfigureAwait(true))
+                    return;
+            }
             else
+            {
                 await _session.StopAllAsync().ConfigureAwait(true);
+            }
 
             ShutdownApp();
         }
@@ -90,13 +104,16 @@ public partial class MainWindow : Window
 
     private void ShutdownApp()
     {
-        SaveUi();
+        if (IsVisible)
+            SaveUi();
         _allowClose = true;
         Application.Current.Shutdown();
     }
 
     private void SaveUi()
     {
+        if (!IsVisible)
+            return;
         UiSettings.Current.Capture(this);
         UiSettings.Current.Save();
     }
@@ -117,7 +134,8 @@ public partial class MainWindow : Window
     {
         if (_allowClose)
         {
-            SaveUi();
+            if (IsVisible)
+                SaveUi();
             return;
         }
 
@@ -142,7 +160,7 @@ public partial class MainWindow : Window
         if (!_session.HasTunnels)
             return;
         var rows = TunnelTransfer.BuildExport(_session.SnapshotRecords());
-        var picker = new TransferWindow(export: true, rows, sourcePath: null, import: null)
+        var picker = new TransferWindow(export: true, rows, _session.SnapshotRecords(), sourcePath: null, import: null)
         {
             Owner = IsVisible ? this : null,
         };
@@ -168,7 +186,7 @@ public partial class MainWindow : Window
         }
 
         var prepared = TunnelTransfer.PrepareImport(_session.SnapshotRecords(), records);
-        var picker = new TransferWindow(export: false, prepared, open.FileName, selected =>
+        var picker = new TransferWindow(export: false, prepared, _session.SnapshotRecords(), open.FileName, selected =>
             _session.TryImport(selected, out _, out var saveError) ? null : saveError)
         {
             Owner = IsVisible ? this : null,
@@ -250,8 +268,23 @@ public partial class MainWindow : Window
     {
         if (e.OriginalSource is not DependencyObject source)
             return;
+        if (FindAncestor<System.Windows.Controls.Primitives.ScrollBar>(source) is not null
+            || FindAncestor<Thumb>(source) is not null
+            || FindAncestor<RepeatButton>(source) is not null)
+            return;
         if (TunnelList.ContainerFromElement(source) is not ListBoxItem)
             TunnelList.SelectedItem = null;
+    }
+
+    private static T? FindAncestor<T>(DependencyObject start) where T : DependencyObject
+    {
+        for (var current = start; current is not null; current = System.Windows.Media.VisualTreeHelper.GetParent(current))
+        {
+            if (current is T match)
+                return match;
+        }
+
+        return null;
     }
 
     private void OnCopyLogClick(object sender, RoutedEventArgs e)

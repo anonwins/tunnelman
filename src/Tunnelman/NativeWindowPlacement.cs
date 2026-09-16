@@ -8,6 +8,7 @@ internal static class NativeWindowPlacement
 {
     private const int SwShownormal = 1;
     private const int SwShowmaximized = 3;
+    private const int WpfRestoreToMaximized = 0x0002;
     private const int SmXvirtualscreen = 76;
     private const int SmYvirtualscreen = 77;
     private const int SmCxvirtualscreen = 78;
@@ -29,7 +30,8 @@ internal static class NativeWindowPlacement
         if (bounds.Width <= 0 || bounds.Height <= 0)
             return false;
 
-        maximized = placement.ShowCmd == SwShowmaximized;
+        maximized = placement.ShowCmd == SwShowmaximized
+            || (placement.Flags & WpfRestoreToMaximized) != 0;
         return true;
     }
 
@@ -42,10 +44,25 @@ internal static class NativeWindowPlacement
         var placement = new WindowPlacement
         {
             Length = Marshal.SizeOf<WindowPlacement>(),
+            Flags = maximized ? WpfRestoreToMaximized : 0,
             ShowCmd = maximized ? SwShowmaximized : SwShownormal,
             NormalPosition = bounds.ToNative(),
         };
-        return SetWindowPlacement(hwnd, ref placement);
+        if (!SetWindowPlacement(hwnd, ref placement))
+            return false;
+
+        if (HwndSource.FromHwnd(hwnd)?.CompositionTarget is { } target)
+        {
+            var topLeft = target.TransformFromDevice.Transform(new System.Windows.Point(bounds.Left, bounds.Top));
+            var bottomRight = target.TransformFromDevice.Transform(new System.Windows.Point(bounds.Right, bounds.Bottom));
+            window.Left = topLeft.X;
+            window.Top = topLeft.Y;
+            window.Width = Math.Max(1, bottomRight.X - topLeft.X);
+            window.Height = Math.Max(1, bottomRight.Y - topLeft.Y);
+        }
+
+        window.WindowState = maximized ? WindowState.Maximized : WindowState.Normal;
+        return true;
     }
 
     internal readonly record struct RectPixels(int Left, int Top, int Right, int Bottom)

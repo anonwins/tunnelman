@@ -252,6 +252,119 @@ public sealed class TunnelTransferTests
     }
 
     [Fact]
+    public void PrepareImport_canonicalizes_kind_and_empty_kind_is_ncat()
+    {
+        var existing = new[]
+        {
+            new TunnelRecord { Name = "Office", Kind = TunnelKinds.NcatSocks, Options = Hop(22001) },
+        };
+        var incoming = new[]
+        {
+            new TunnelRecord { Name = "Office", Kind = "Ncat-Socks", Options = Hop(22001) },
+            new TunnelRecord { Name = "plain", Kind = "", Options = Hop(22003) },
+            new TunnelRecord { Name = "also", Kind = "   ", Options = Hop(22004) },
+        };
+        var rows = TunnelTransfer.PrepareImport(existing, incoming);
+        Assert.Equal(TunnelKinds.NcatSocks, rows[0].Record.Kind);
+        Assert.Equal("Office (2)", rows[0].Record.Name);
+        Assert.Equal(22002, PortOf(rows[0].Record));
+        Assert.Equal("Office", rows[0].Source.Name);
+        Assert.Equal(22001, PortOf(rows[0].Source));
+        Assert.Equal(TunnelKinds.NcatSocks, rows[1].Record.Kind);
+        Assert.Equal(TunnelKinds.NcatSocks, rows[2].Record.Kind);
+    }
+
+    [Fact]
+    public void PrepareImport_subset_keeps_original_office_listen()
+    {
+        var existing = new[]
+        {
+            new TunnelRecord { Name = "Office", Kind = TunnelKinds.NcatSocks, Options = Hop(22001) },
+        };
+        var incoming = new[]
+        {
+            new TunnelRecord { Name = "Office", Kind = TunnelKinds.NcatSocks, Options = Hop(22001) },
+            new TunnelRecord { Name = "Office (2)", Kind = TunnelKinds.NcatSocks, Options = Hop(22003) },
+        };
+        var preview = TunnelTransfer.PrepareImport(existing, incoming);
+        Assert.Equal("Office (2)", preview[0].Record.Name);
+        Assert.Equal(22002, PortOf(preview[0].Record));
+        Assert.Equal("Office (2) (2)", preview[1].Record.Name);
+
+        var subset = TunnelTransfer.PrepareImport(existing, [preview[1].Source]);
+        var onlyB = Assert.Single(subset);
+        Assert.Equal("Office (2)", onlyB.Record.Name);
+        Assert.Equal(22003, PortOf(onlyB.Record));
+        Assert.Equal("Office", existing[0].Name);
+        Assert.Equal(22001, PortOf(existing[0]));
+    }
+
+    [Fact]
+    public void IsReservedSessionPath_covers_session_siblings()
+    {
+        var tunnels = AppPaths.TunnelsFile;
+        Assert.True(TunnelTransfer.IsReservedSessionPath(tunnels));
+        Assert.True(TunnelTransfer.IsReservedSessionPath(tunnels + ".bak"));
+        Assert.True(TunnelTransfer.IsReservedSessionPath(tunnels + ".tmp"));
+        Assert.True(TunnelTransfer.IsReservedSessionPath(tunnels + "." + Guid.NewGuid().ToString("n") + ".tmp"));
+        Assert.True(TunnelTransfer.IsReservedSessionPath(tunnels + "." + Guid.NewGuid().ToString("n") + ".prev"));
+        Assert.True(TunnelTransfer.IsReservedSessionPath(AppPaths.UiFile));
+        Assert.False(TunnelTransfer.IsReservedSessionPath(@"C:\other\tunnels.json"));
+    }
+
+    [Fact]
+    public void Write_strips_nested_and_snake_case_secrets()
+    {
+        var dir = NewDir("tunnelman-xfer-nested-");
+        try
+        {
+            var file = Path.Combine(dir, "out.tunnelman.json");
+            var options = new JsonObject
+            {
+                ["host"] = "x",
+                ["api_key"] = "nested-secret",
+                ["extra"] = new JsonObject { ["privateKey"] = "pk", ["safe"] = "ok" },
+                ["list"] = new JsonArray { new JsonObject { ["password"] = "pw" } },
+            };
+            TunnelTransfer.Write(file, [
+                new TunnelRecord { Name = "future", Kind = "rathole", Options = options },
+            ]);
+            var text = File.ReadAllText(file);
+            Assert.DoesNotContain("nested-secret", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("pk", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("pw", text, StringComparison.Ordinal);
+            Assert.Contains("\"host\"", text, StringComparison.Ordinal);
+            Assert.Contains("\"safe\"", text, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void PrepareImport_unspecified_listen_overlaps_any_host()
+    {
+        var existing = new[]
+        {
+            new TunnelRecord
+            {
+                Name = "any",
+                Kind = TunnelKinds.NcatSocks,
+                Options = new NcatSocksOptions { RemoteHost = "example.test", ListenAddress = "0.0.0.0", ListenPort = 22001 }.ToJson(),
+            },
+        };
+        var incoming = new[]
+        {
+            new TunnelRecord { Name = "local", Kind = TunnelKinds.NcatSocks, Options = Hop(22001) },
+        };
+        var row = Assert.Single(TunnelTransfer.PrepareImport(existing, incoming));
+        Assert.True(row.CanSelect);
+        Assert.Equal(22002, PortOf(row.Record));
+        Assert.Contains("Listen was", row.Note, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void NormalizeExportPath_strips_double_json()
     {
         Assert.Equal(@"C:\out\tunnels.tunnelman.json", TunnelTransfer.NormalizeExportPath(@"C:\out\tunnels.tunnelman.json.json"));

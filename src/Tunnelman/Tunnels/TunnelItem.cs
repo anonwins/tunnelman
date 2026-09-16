@@ -39,6 +39,7 @@ internal sealed class TunnelItem : INotifyPropertyChanged
                 return;
             Record.Enabled = value;
             OnPropertyChanged();
+            OnPropertyChanged(nameof(CanToggle));
         }
     }
 
@@ -82,10 +83,13 @@ internal sealed class TunnelItem : INotifyPropertyChanged
             _isBusy = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(CanToggle));
+            OnPropertyChanged(nameof(CanMutate));
         }
     }
 
-    public bool CanToggle => !IsBusy && IsSupported;
+    public bool CanToggle => !IsBusy && (IsSupported || Enabled);
+
+    public bool CanMutate => !IsBusy;
 
     public string LogText
     {
@@ -108,6 +112,7 @@ internal sealed class TunnelItem : INotifyPropertyChanged
         OnPropertyChanged(nameof(HasProxy));
         OnPropertyChanged(nameof(IsSupported));
         OnPropertyChanged(nameof(CanToggle));
+        OnPropertyChanged(nameof(CanMutate));
         OnPropertyChanged(nameof(Enabled));
     }
 
@@ -116,6 +121,14 @@ internal sealed class TunnelItem : INotifyPropertyChanged
         IsBusy = busy;
         if (status is { } next)
             Status = next;
+    }
+
+    public bool TryBeginBusy(TunnelStatus status)
+    {
+        if (_isBusy)
+            return false;
+        SetBusy(true, status);
+        return true;
     }
 
     public void SetRuntime(ITunnelRuntime? runtime) => _runtime = runtime;
@@ -142,7 +155,7 @@ internal sealed class TunnelItem : INotifyPropertyChanged
     }
 
     private NcatSocksOptions? TryOptions() =>
-        Kind == TunnelKinds.NcatSocks
+        TunnelKindRegistry.Is(Kind, TunnelKinds.NcatSocks)
         && NcatSocksOptions.TryParse(Record.Options, out var options, out _)
             ? options
             : null;

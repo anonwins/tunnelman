@@ -36,6 +36,7 @@ internal sealed class TunnelExportEntry
 
 internal sealed class TransferEntry
 {
+    public required TunnelRecord Source { get; init; }
     public required TunnelRecord Record { get; init; }
     public required string DisplayName { get; init; }
     public string ListenText { get; init; } = "";
@@ -54,11 +55,13 @@ internal static class TunnelTransfer
     public const string NoTunnels = "This file has no tunnels.";
     public const string CouldNotRead = "Could not read this file.";
     public const string CouldNotWrite = "Could not write the file.";
+    public const string ReservedPath = "That path is used by Tunnelman for the session. Choose another file.";
     public const string FileFilter = "Tunnelman export (*.tunnelman.json)|*.tunnelman.json|JSON (*.json)|*.json";
 
     private static readonly string[] SecretKeys =
     [
         "token", "password", "secret", "passphrase", "credential", "apiKey", "privateKey",
+        "api_key", "private_key",
     ];
 
     public static void Write(string path, IEnumerable<TunnelRecord> records)
@@ -154,6 +157,7 @@ internal static class TunnelTransfer
                     return false;
                 }
 
+                record.Kind = TunnelKindRegistry.Canonicalize(record.Kind);
                 list.Add(record);
             }
             catch (Exception ex) when (ex is JsonException or NotSupportedException or InvalidOperationException)
@@ -174,25 +178,34 @@ internal static class TunnelTransfer
     }
 
     public static IReadOnlyList<TransferEntry> BuildExport(IEnumerable<TunnelRecord> snapshots) =>
-        snapshots.Select(snapshot => Describe(snapshot.Clone(), remap: false, names: null, listens: null)).ToList();
+        snapshots.Select(snapshot =>
+        {
+            var source = snapshot.Clone();
+            return Describe(source.Clone(), source, remap: false, names: null, listens: null);
+        }).ToList();
 
     public static IReadOnlyList<TransferEntry> PrepareImport(
         IEnumerable<TunnelRecord> existing,
         IEnumerable<TunnelRecord> incoming)
     {
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var listens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var listens = new List<(string Host, int Port)>();
         foreach (var record in existing)
         {
             names.Add(record.Name);
-            if (record.Kind == TunnelKinds.NcatSocks
+            if (TunnelKindRegistry.Is(record.Kind, TunnelKinds.NcatSocks)
                 && NcatSocksOptions.TryParse(record.Options, out var options, out _))
-                listens.Add(options.ListenKey);
+                listens.Add((options.ListenAddress, options.ListenPort));
         }
 
         var rows = new List<TransferEntry>();
         foreach (var raw in incoming)
-            rows.Add(Describe(raw.Clone(), remap: true, names, listens));
+        {
+            var source = raw.Clone();
+            source.Kind = TunnelKindRegistry.Canonicalize(source.Kind);
+            rows.Add(Describe(source.Clone(), source, remap: true, names, listens));
+        }
+
         return rows;
     }
 
@@ -205,6 +218,53 @@ internal static class TunnelTransfer
         return path;
     }
 
+    public static bool IsReservedSessionPath(string path)
+    {
+        string full;
+        try
+        {
+            full = Path.GetFullPath(path);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+
+        foreach (var reserved in new[] { AppPaths.TunnelsFile, AppPaths.UiFile })
+        {
+            string reservedFull;
+            try
+            {
+                reservedFull = Path.GetFullPath(reserved);
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                continue;
+            }
+
+            if (full.Equals(reservedFull, StringComparison.OrdinalIgnoreCase)
+                || full.Equals(reservedFull + ".bak", StringComparison.OrdinalIgnoreCase)
+                || full.Equals(reservedFull + ".tmp", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            var directory = Path.GetDirectoryName(full);
+            var reservedDirectory = Path.GetDirectoryName(reservedFull);
+            if (directory is null || reservedDirectory is null
+                || !directory.Equals(reservedDirectory, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var name = Path.GetFileName(full);
+            var reservedName = Path.GetFileName(reservedFull);
+            if (name.StartsWith(reservedName + ".", StringComparison.OrdinalIgnoreCase)
+                && (name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase)
+                    || name.EndsWith(".prev", StringComparison.OrdinalIgnoreCase)
+                    || name.EndsWith(".bak", StringComparison.OrdinalIgnoreCase)))
+                return true;
+        }
+
+        return false;
+    }
+
     public static string CountLabel(string verb, int count) =>
         count == 1 ? $"{verb} 1 tunnel." : $"{verb} {count} tunnels.";
 
@@ -214,9 +274,8 @@ internal static class TunnelTransfer
     public static string PrimaryLabel(bool export, int count)
     {
         var action = export ? "Export" : "Import";
-        var noun = export ? "tunnels" : "tunnels";
         if (count == 0)
-            return $"{action} {noun}";
+            return $"{action} tunnels";
         if (count == 1)
             return $"{action} tunnel";
         return $"{action} {count} tunnels";
@@ -224,18 +283,18 @@ internal static class TunnelTransfer
 
     private static TransferEntry Describe(
         TunnelRecord record,
+        TunnelRecord source,
         bool remap,
         HashSet<string>? names,
-        HashSet<string>? listens)
+        List<(string Host, int Port)>? listens)
     {
         record.Enabled = false;
-        if (string.IsNullOrWhiteSpace(record.Kind))
-            record.Kind = "";
+        record.Kind = TunnelKindRegistry.Canonicalize(record.Kind);
 
         var displayName = string.IsNullOrWhiteSpace(record.Name) ? "(unnamed)" : record.Name.Trim();
         var listenText = "";
         var remoteText = "";
-        if (record.Kind == TunnelKinds.NcatSocks
+        if (TunnelKindRegistry.Is(record.Kind, TunnelKinds.NcatSocks)
             && NcatSocksOptions.TryParse(record.Options, out var parsed, out _))
         {
             listenText = parsed.ListenText;
@@ -243,13 +302,13 @@ internal static class TunnelTransfer
         }
 
         if (string.IsNullOrWhiteSpace(record.Name))
-            return Invalid(record, "(unnamed)", listenText, remoteText);
+            return Invalid(record, source, "(unnamed)", listenText, remoteText);
 
         var kind = TunnelKindRegistry.Find(record.Kind);
         if (kind is not null)
         {
             if (record.Options is null || !kind.TryValidate(record.Options, out _))
-                return Invalid(record, displayName, listenText, remoteText);
+                return Invalid(record, source, displayName, listenText, remoteText);
         }
 
         string? note = null;
@@ -263,15 +322,15 @@ internal static class TunnelTransfer
 
         if (remap
             && listens is not null
-            && record.Kind == TunnelKinds.NcatSocks
+            && TunnelKindRegistry.Is(record.Kind, TunnelKinds.NcatSocks)
             && record.Options is not null
             && NcatSocksOptions.TryParse(record.Options, out var hop, out _))
         {
             var originalKey = hop.ListenKey;
-            if (!TryReserveListen(hop, record, listens, out var reserved))
-                return Invalid(record, record.Name, listenText, remoteText);
+            if (!ListenOccupancy.TryReserve(hop, record, listens))
+                return Invalid(record, source, record.Name, listenText, remoteText);
 
-            if (!reserved.Equals(originalKey, StringComparison.OrdinalIgnoreCase))
+            if (!hop.ListenKey.Equals(originalKey, StringComparison.OrdinalIgnoreCase))
             {
                 listenText = hop.ListenText;
                 note = note is null
@@ -283,7 +342,7 @@ internal static class TunnelTransfer
         if (remap && names is not null)
             names.Add(record.Name);
 
-        if (record.Kind == TunnelKinds.NcatSocks
+        if (TunnelKindRegistry.Is(record.Kind, TunnelKinds.NcatSocks)
             && NcatSocksOptions.TryParse(record.Options, out var finalHop, out _))
         {
             listenText = finalHop.ListenText;
@@ -292,6 +351,7 @@ internal static class TunnelTransfer
 
         return new TransferEntry
         {
+            Source = source,
             Record = record,
             DisplayName = remap ? record.Name : displayName,
             ListenText = listenText,
@@ -301,9 +361,15 @@ internal static class TunnelTransfer
         };
     }
 
-    private static TransferEntry Invalid(TunnelRecord record, string displayName, string listenText, string remoteText) =>
+    private static TransferEntry Invalid(
+        TunnelRecord record,
+        TunnelRecord source,
+        string displayName,
+        string listenText,
+        string remoteText) =>
         new()
         {
+            Source = source,
             Record = record,
             DisplayName = displayName,
             ListenText = listenText,
@@ -326,38 +392,6 @@ internal static class TunnelTransfer
         }
     }
 
-    private static bool TryReserveListen(
-        NcatSocksOptions hop,
-        TunnelRecord record,
-        HashSet<string> listens,
-        out string key)
-    {
-        key = hop.ListenKey;
-        var port = hop.ListenPort;
-        var address = hop.ListenAddress.Trim();
-        if (!listens.Contains(key))
-        {
-            listens.Add(key);
-            return true;
-        }
-
-        while (port < 65535)
-        {
-            port++;
-            key = $"{address}:{port}";
-            if (listens.Contains(key))
-                continue;
-            hop.ListenPort = port;
-            var clone = record.Options is null ? new JsonObject() : (JsonObject)record.Options.DeepClone();
-            clone["listenPort"] = port;
-            record.Options = clone;
-            listens.Add(key);
-            return true;
-        }
-
-        return false;
-    }
-
     private static TunnelExportEntry ToExportEntry(TunnelRecord record) =>
         new()
         {
@@ -372,13 +406,41 @@ internal static class TunnelTransfer
         if (options is null)
             return null;
         var clone = (JsonObject)options.DeepClone();
-        foreach (var key in clone.Select(kv => kv.Key).ToList())
+        StripNode(clone);
+        return clone;
+    }
+
+    private static void StripNode(JsonNode? node)
+    {
+        if (node is JsonObject obj)
         {
-            if (SecretKeys.Contains(key, StringComparer.OrdinalIgnoreCase))
-                clone.Remove(key);
+            foreach (var key in obj.Select(kv => kv.Key).ToList())
+            {
+                if (IsSecretKey(key))
+                    obj.Remove(key);
+                else
+                    StripNode(obj[key]);
+            }
+        }
+        else if (node is JsonArray array)
+        {
+            foreach (var item in array)
+                StripNode(item);
+        }
+    }
+
+    private static bool IsSecretKey(string key)
+    {
+        var folded = key.Replace("_", "", StringComparison.Ordinal);
+        foreach (var secret in SecretKeys)
+        {
+            if (key.Equals(secret, StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (folded.Equals(secret.Replace("_", "", StringComparison.Ordinal), StringComparison.OrdinalIgnoreCase))
+                return true;
         }
 
-        return clone;
+        return false;
     }
 
     private static bool TryGet(JsonObject obj, string name, out JsonNode? node)

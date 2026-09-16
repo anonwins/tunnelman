@@ -93,4 +93,29 @@ public sealed class NcatResolverTests
             Directory.Delete(dir, recursive: true);
         }
     }
+
+    [Theory]
+    [InlineData(@"?:\not|a|path")]
+    [InlineData("file:////not a path")]
+    public void Candidates_skips_invalid_configured_paths(string configured)
+    {
+        var result = Record.Exception(() => NcatResolver.Resolve(new NcatResolveContext
+        {
+            ConfiguredPath = configured,
+            AppDirectory = Path.GetTempPath(),
+            PathEnvironment = "",
+            WellKnownPaths = [configured],
+            FileExists = _ => true,
+            VersionProbe = _ => "Ncat nmap",
+        }));
+        Assert.Null(result);
+        var candidates = NcatResolver.Candidates(new NcatResolveContext
+        {
+            ConfiguredPath = configured,
+            AppDirectory = Path.GetTempPath(),
+            PathEnvironment = "",
+            WellKnownPaths = [configured],
+        }).ToList();
+        Assert.DoesNotContain(configured, candidates);
+    }
 }

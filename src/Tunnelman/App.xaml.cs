@@ -41,7 +41,15 @@ public partial class App : System.Windows.Application
         _watchingAccent = true;
         UiSettings.Load();
         _session = new TunnelSession();
-        _session.Load();
+        try
+        {
+            _session.Load();
+        }
+        catch (Exception)
+        {
+            _session.Load();
+        }
+
         _session.ResolveNcat();
         _main = new MainWindow(_session);
         _tray = new TrayController(

@@ -20,7 +20,7 @@ public partial class EditTunnelWindow : Window
         {
             TitleText.Text = "Edit tunnel";
             NameBox.Text = existing.Name;
-            if (existing.Kind == TunnelKinds.NcatSocks
+            if (TunnelKindRegistry.Is(existing.Kind, TunnelKinds.NcatSocks)
                 && NcatSocksOptions.TryParse(existing.Record.Options, out var parsed, out _))
                 options = parsed;
         }
@@ -37,6 +37,7 @@ public partial class EditTunnelWindow : Window
     public string TunnelName { get; private set; } = "";
     public string Kind { get; private set; } = TunnelKinds.NcatSocks;
     public JsonObject? Options { get; private set; }
+    private bool _committing;
 
     private void FillKinds(string? selectedKind)
     {
@@ -57,39 +58,48 @@ public partial class EditTunnelWindow : Window
 
     private void OnSaveClick(object sender, RoutedEventArgs e)
     {
-        var options = new NcatSocksOptions
-        {
-            RemoteHost = RemoteHostBox.Text.Trim(),
-            ListenAddress = ListenAddressBox.Text.Trim(),
-            SocksHost = SocksHostBox.Text.Trim(),
-        };
-
-        if (!int.TryParse(RemotePortBox.Text.Trim(), out var remotePort)
-            || !int.TryParse(ListenPortBox.Text.Trim(), out var listenPort)
-            || !int.TryParse(SocksPortBox.Text.Trim(), out var socksPort))
-        {
-            MessageBox.Show(this, "Ports must be numbers.", "Tunnelman", MessageBoxButton.OK, MessageBoxImage.Warning);
+        if (sender is not System.Windows.Controls.Button button || !DialogCommit.TryBegin(button, ref _committing))
             return;
-        }
-
-        options.RemotePort = remotePort;
-        options.ListenPort = listenPort;
-        options.SocksPort = socksPort;
-        if (!NcatCommandBuilder.TryValidate(options, out var error))
+        try
         {
-            MessageBox.Show(this, error, "Tunnelman", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
+            var options = new NcatSocksOptions
+            {
+                RemoteHost = RemoteHostBox.Text.Trim(),
+                ListenAddress = ListenAddressBox.Text.Trim(),
+                SocksHost = SocksHostBox.Text.Trim(),
+            };
 
-        if (string.IsNullOrWhiteSpace(NameBox.Text))
+            if (!int.TryParse(RemotePortBox.Text.Trim(), out var remotePort)
+                || !int.TryParse(ListenPortBox.Text.Trim(), out var listenPort)
+                || !int.TryParse(SocksPortBox.Text.Trim(), out var socksPort))
+            {
+                MessageBox.Show(this, "Ports must be numbers.", "Tunnelman", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            options.RemotePort = remotePort;
+            options.ListenPort = listenPort;
+            options.SocksPort = socksPort;
+            if (!NcatCommandBuilder.TryValidate(options, out var error))
+            {
+                MessageBox.Show(this, error, "Tunnelman", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(NameBox.Text))
+            {
+                MessageBox.Show(this, "Name is required.", "Tunnelman", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            TunnelName = NameBox.Text.Trim();
+            Kind = TunnelKinds.NcatSocks;
+            Options = options.ToJson();
+            DialogResult = true;
+        }
+        finally
         {
-            MessageBox.Show(this, "Name is required.", "Tunnelman", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
+            DialogCommit.End(button, () => _committing = false);
         }
-
-        TunnelName = NameBox.Text.Trim();
-        Kind = TunnelKinds.NcatSocks;
-        Options = options.ToJson();
-        DialogResult = true;
     }
 }

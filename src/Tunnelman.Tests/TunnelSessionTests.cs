@@ -47,7 +47,7 @@ public sealed class TunnelSessionTests
     }
 
     [Fact]
-    public void Load_marks_unknown_kind_unsupported()
+    public async Task Load_marks_unknown_kind_unsupported()
     {
         var dir = NewDir("tunnelman-session-kind-");
         try
@@ -68,8 +68,14 @@ public sealed class TunnelSessionTests
             session.Load();
             var item = Assert.Single(session.Tunnels);
             Assert.Equal(TunnelStatus.Unsupported, item.Status);
-            Assert.False(item.CanToggle);
+            Assert.True(item.CanToggle);
             Assert.False(item.IsSupported);
+
+            Assert.True(item.Enabled);
+            await session.SetEnabledAsync(item, false);
+            Assert.False(item.Enabled);
+            Assert.False(item.CanToggle);
+            Assert.Equal(TunnelStatus.Unsupported, item.Status);
         }
         finally
         {
@@ -221,6 +227,195 @@ public sealed class TunnelSessionTests
     }
 
     [Fact]
+    public void Persist_blocked_load_refuses_add_and_keeps_bytes()
+    {
+        var dir = NewDir("tunnelman-session-block-");
+        var file = Path.Combine(dir, "tunnels.json");
+        const string original = """{"version":1,"tunnels":[]}""";
+        File.WriteAllText(file, original);
+        try
+        {
+            using (var locked = new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                var session = new TunnelSession(new TunnelStore(file), Dispatcher.CurrentDispatcher);
+                session.Load();
+                Assert.False(session.TryAdd("one", TunnelKinds.NcatSocks, Hop(22001), out var error));
+                Assert.Contains("Could not save", error, StringComparison.OrdinalIgnoreCase);
+                Assert.Empty(session.Tunnels);
+            }
+
+            Assert.Equal(original, File.ReadAllText(file));
+            Assert.False(File.Exists(file + ".bak"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Enable_delete_edit_and_clear_roll_back_when_save_fails()
+    {
+        var dir = NewDir("tunnelman-session-rollback-");
+        var file = Path.Combine(dir, "tunnels.json");
+        try
+        {
+            var session = new TunnelSession(new TunnelStore(file), Dispatcher.CurrentDispatcher);
+            session.Load();
+            Assert.True(session.TryAdd("one", TunnelKinds.NcatSocks, Hop(22001), out _));
+            var item = Assert.Single(session.Tunnels);
+            BlockWrites(file);
+
+            await session.SetEnabledAsync(item, true);
+            Assert.False(item.Enabled);
+            Assert.Null(item.Runtime);
+
+            await session.DeleteAsync(item);
+            Assert.Single(session.Tunnels);
+
+            Assert.False(session.TryUpdate(item, "renamed", TunnelKinds.NcatSocks, Hop(22001), out _));
+            Assert.Equal("one", item.Name);
+
+            Assert.False(await session.ClearSessionAsync());
+            Assert.Single(session.Tunnels);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task StartEnabled_missing_ncat_marks_failed_not_unsupported()
+    {
+        var dir = NewDir("tunnelman-session-ncat-");
+        try
+        {
+            var store = new TunnelStore(Path.Combine(dir, "tunnels.json"));
+            store.Save([
+                new TunnelRecord
+                {
+                    Id = Guid.NewGuid(),
+                    Name = "up",
+                    Kind = TunnelKinds.NcatSocks,
+                    Enabled = true,
+                    Options = Hop(22001),
+                },
+                new TunnelRecord
+                {
+                    Id = Guid.NewGuid(),
+                    Name = "future",
+                    Kind = "rathole",
+                    Enabled = true,
+                    Options = new JsonObject { ["token"] = "abc" },
+                },
+                new TunnelRecord
+                {
+                    Id = Guid.NewGuid(),
+                    Name = "down",
+                    Kind = TunnelKinds.NcatSocks,
+                    Enabled = false,
+                    Options = Hop(22002),
+                },
+            ]);
+
+            var session = new TunnelSession(store, Dispatcher.CurrentDispatcher);
+            session.Load();
+            await session.StartEnabledAsync();
+
+            Assert.Equal(TunnelStatus.Failed, session.Tunnels[0].Status);
+            Assert.Contains("ncat", session.Tunnels[0].LogText, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(TunnelStatus.Unsupported, session.Tunnels[1].Status);
+            Assert.Equal(TunnelStatus.Stopped, session.Tunnels[2].Status);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Notice_yields_to_running_count()
+    {
+        WithEmpty(session =>
+        {
+            Assert.True(session.TryAdd("one", TunnelKinds.NcatSocks, Hop(22001), out _));
+            session.Tunnels[0].SetBusy(false, TunnelStatus.Running);
+            session.SetNotice("Exported 1 tunnel.");
+            Assert.Contains("running", session.StatusText, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("Exported", session.StatusText, StringComparison.Ordinal);
+        });
+    }
+
+    [Fact]
+    public void TryAdd_rejects_unspecified_listen_overlap()
+    {
+        WithEmpty(session =>
+        {
+            var local = new NcatSocksOptions { RemoteHost = "example.test", ListenAddress = "127.0.0.1", ListenPort = 22001 }.ToJson();
+            var any = new NcatSocksOptions { RemoteHost = "example.test", ListenAddress = "0.0.0.0", ListenPort = 22001 }.ToJson();
+            Assert.True(session.TryAdd("one", TunnelKinds.NcatSocks, local, out _));
+            Assert.False(session.TryAdd("two", TunnelKinds.NcatSocks, any, out var error));
+            Assert.Contains("listen", error, StringComparison.OrdinalIgnoreCase);
+        });
+    }
+
+    [Fact]
+    public async Task Fake_runtime_identity_busy_and_dispose_barrier()
+    {
+        var dir = NewDir("tunnelman-session-fake-");
+        try
+        {
+            var first = new FakeRuntime();
+            var second = new FakeRuntime();
+            var heldRuntime = new FakeRuntime();
+            var queue = new Queue<ITunnelRuntime>([first, second, heldRuntime]);
+            var session = new TunnelSession(
+                new TunnelStore(Path.Combine(dir, "tunnels.json")),
+                Dispatcher.CurrentDispatcher,
+                _ => queue.Dequeue());
+            session.Load();
+            session.SetNcatForTests("ncat.exe", missing: false);
+            Assert.True(session.TryAdd("one", TunnelKinds.NcatSocks, Hop(22001), out _));
+            var item = session.Tunnels[0];
+            item.Enabled = true;
+
+            await session.StartEnabledAsync();
+            Assert.Same(first, item.Runtime);
+            Assert.Equal(TunnelStatus.Running, item.Status);
+
+            first.IsRunning = false;
+            await session.StartEnabledAsync();
+            Assert.Same(second, item.Runtime);
+            Assert.True(first.Disposed);
+            first.RaiseExited(1);
+            Assert.False(second.Disposed);
+            Assert.Same(second, item.Runtime);
+
+            heldRuntime.HoldStart = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            second.IsRunning = false;
+            var held = session.StartEnabledAsync();
+            await heldRuntime.Entered.Task;
+            Assert.True(item.IsBusy);
+            await session.DeleteAsync(item);
+            Assert.Single(session.Tunnels);
+            await session.StartEnabledAsync();
+            Assert.True(item.IsBusy);
+
+            session.Dispose();
+            heldRuntime.HoldStart.TrySetResult(true);
+            await held;
+            await session.StartEnabledAsync();
+            await session.DeleteAsync(item);
+            Assert.Single(session.Tunnels);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
     public void TryImport_unknown_kind_and_notice_survives_resolve()
     {
         WithEmpty(session =>
@@ -259,6 +454,45 @@ public sealed class TunnelSessionTests
         return dir;
     }
 
+    private static void BlockWrites(string file)
+    {
+        if (File.Exists(file))
+            File.Delete(file);
+        Directory.CreateDirectory(file);
+    }
+
     private static JsonObject Hop(int listenPort) =>
         new NcatSocksOptions { RemoteHost = "example.test", ListenPort = listenPort }.ToJson();
+
+    private sealed class FakeRuntime : ITunnelRuntime
+    {
+        public bool Disposed { get; private set; }
+        public bool IsRunning { get; set; }
+        public TaskCompletionSource<bool>? HoldStart { get; set; }
+        public TaskCompletionSource<bool> Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public event Action<int>? Exited;
+
+        public async Task StartAsync(TunnelRecord record, string ncatPath, Action<string> log, CancellationToken cancellationToken)
+        {
+            Entered.TrySetResult(true);
+            if (HoldStart is { } hold)
+                await hold.Task.ConfigureAwait(false);
+            IsRunning = true;
+        }
+
+        public Task StopAsync()
+        {
+            IsRunning = false;
+            return Task.CompletedTask;
+        }
+
+        public void Dispose()
+        {
+            Disposed = true;
+            IsRunning = false;
+        }
+
+        public void RaiseExited(int code) => Exited?.Invoke(code);
+    }
 }

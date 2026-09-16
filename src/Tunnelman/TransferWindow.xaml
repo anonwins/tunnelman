@@ -76,6 +76,7 @@
                             </Grid.ColumnDefinitions>
                             <CheckBox Style="{StaticResource PickerCheck}"
                                       IsChecked="{Binding IsChecked, Mode=TwoWay}"
+                                      IsHitTestVisible="{Binding CanSelect}"
                                       Focusable="False"
                                       IsTabStop="False"
                                       VerticalAlignment="Center"
