@@ -130,7 +130,7 @@ internal static class TunnelTransfer
             ExportedAt = DateTimeOffset.UtcNow,
             Tunnels = records.Select(ToExportEntry).ToList(),
         };
-        var plain = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(document, TunnelStore.JsonOptions));
+        var plain = JsonSerializer.SerializeToUtf8Bytes(document, TunnelStore.JsonOptions);
         byte[] nonce;
         byte[] cipher;
         try

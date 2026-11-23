@@ -72,12 +72,13 @@
                     </Button>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
-                    <ComboBox x:Name="AutoLockBox"
-                              MinWidth="210"
-                              Margin="0,0,8,0"
-                              VerticalAlignment="Center"
-                              ToolTip="Lock when the keyboard and mouse have been idle, and when the window hides to the tray."
-                              SelectionChanged="OnAutoLockChanged"/>
+                    <Button Style="{StaticResource RowButton}"
+                            Click="OnSettingsClick"
+                            Margin="0,0,8,0"
+                            ToolTip="Settings">
+                        <TextBlock Style="{StaticResource GlyphSmall}" Text="&#xE713;"
+                                   Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                    </Button>
                     <Button Style="{StaticResource RowButton}"
                             Click="OnLockClick"
                             IsEnabled="{Binding CanLock}"

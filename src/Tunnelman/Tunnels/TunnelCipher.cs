@@ -42,6 +42,21 @@ internal sealed class SessionKey : IDialSecrets, IDisposable
         }
     }
 
+    public SessionKey DeriveDial()
+    {
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_key is null, this);
+            var dial = HKDF.DeriveKey(
+                HashAlgorithmName.SHA256,
+                _key,
+                TunnelCipher.KeyBytes,
+                salt: null,
+                info: TunnelCipher.DialInfo);
+            return new SessionKey(dial);
+        }
+    }
+
     public byte[] Seal(ReadOnlySpan<byte> plaintext)
     {
         var nonce = RandomNumberGenerator.GetBytes(TunnelCipher.NonceBytes);
@@ -51,7 +66,7 @@ internal sealed class SessionKey : IDialSecrets, IDisposable
         {
             ObjectDisposedException.ThrowIf(_key is null, this);
             using var aes = new AesGcm(_key, TunnelCipher.TagBytes);
-            aes.Encrypt(nonce, plaintext, cipher, tag, TunnelCipher.AssociatedData);
+            aes.Encrypt(nonce, plaintext, cipher, tag, TunnelCipher.DialAssociatedData);
         }
 
         var blob = new byte[nonce.Length + cipher.Length + tag.Length];
@@ -75,7 +90,7 @@ internal sealed class SessionKey : IDialSecrets, IDisposable
         {
             ObjectDisposedException.ThrowIf(_key is null, this);
             using var aes = new AesGcm(_key, TunnelCipher.TagBytes);
-            aes.Decrypt(nonce, cipher, tag, destination, TunnelCipher.AssociatedData);
+            aes.Decrypt(nonce, cipher, tag, destination, TunnelCipher.DialAssociatedData);
         }
     }
 
@@ -145,6 +160,8 @@ internal static class TunnelCipher
 
     internal static readonly byte[] AssociatedData = Encoding.UTF8.GetBytes("tunnelman-session/1");
     internal static readonly byte[] ExportAssociatedData = Encoding.UTF8.GetBytes("tunnelman-export/1");
+    internal static readonly byte[] DialAssociatedData = Encoding.UTF8.GetBytes("tunnelman-dial/1");
+    internal static readonly byte[] DialInfo = Encoding.UTF8.GetBytes("tunnelman-dial/1");
 
     public static bool IterationsInRange(int iterations) =>
         iterations is >= MinIterations and <= MaxIterations;

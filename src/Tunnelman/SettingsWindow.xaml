@@ -1,0 +1,59 @@
+<Window x:Class="Tunnelman.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Settings"
+        Width="440"
+        MinWidth="400"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Background="{StaticResource BgBrush}"
+        Foreground="{StaticResource TextBrush}"
+        FontFamily="Segoe UI"
+        UseLayoutRounding="True"
+        SourceInitialized="OnSourceInitialized">
+    <DockPanel Margin="20" Background="{StaticResource BgBrush}">
+        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,20">
+            <TextBlock Text="Settings" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,16"/>
+            <TextBlock Text="Auto-lock" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,6"/>
+            <ComboBox x:Name="IdleBox" MinHeight="32" Margin="0,0,0,16"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                <CheckBox x:Name="TrayLockBox" Style="{StaticResource PickerCheck}" VerticalAlignment="Center"/>
+                <TextBlock Text="Lock when the window hides to the tray"
+                           Margin="10,0,0,0"
+                           VerticalAlignment="Center"
+                           Cursor="Hand"
+                           MouseLeftButtonUp="OnTrayLabel"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal">
+                <CheckBox x:Name="StopDialBox" Style="{StaticResource PickerCheck}" VerticalAlignment="Center"/>
+                <TextBlock Text="Stop dialing when locked"
+                           Margin="10,0,0,0"
+                           VerticalAlignment="Center"
+                           Cursor="Hand"
+                           MouseLeftButtonUp="OnStopDialLabel"/>
+            </StackPanel>
+            <TextBlock Text="Open connections stay up. New ones wait until you unlock."
+                       Foreground="{StaticResource MutedBrush}"
+                       TextWrapping="Wrap"
+                       Margin="26,6,0,0"/>
+        </StackPanel>
+        <StackPanel>
+            <Button IsDefault="True" Click="OnSaveClick" HorizontalAlignment="Stretch" Margin="0,0,0,8">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE74E;"/>
+                    <TextBlock Text="Save" Margin="8,0,0,0" VerticalAlignment="Center"
+                               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                </StackPanel>
+            </Button>
+            <Button IsCancel="True" HorizontalAlignment="Stretch">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE711;"/>
+                    <TextBlock Text="Cancel" Margin="8,0,0,0" VerticalAlignment="Center"
+                               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                </StackPanel>
+            </Button>
+        </StackPanel>
+    </DockPanel>
+</Window>

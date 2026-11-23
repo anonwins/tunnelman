@@ -13,6 +13,7 @@ public partial class EditTunnelWindow : Window
     internal EditTunnelWindow(TunnelItem? existing)
     {
         InitializeComponent();
+        Closed += (_, _) => ClearBoxes();
         var record = existing?.Record.Clone() ?? TunnelRecord.Defaults();
         TitleText.Text = existing is null ? "New tunnel" : "Edit tunnel";
         if (existing is not null)
@@ -32,6 +33,23 @@ public partial class EditTunnelWindow : Window
     public string TunnelName { get; private set; } = "";
     internal TunnelRecord? Draft { get; private set; }
     private bool _committing;
+
+    internal void ReleaseDraft()
+    {
+        Draft = null;
+        TunnelName = "";
+    }
+
+    private void ClearBoxes()
+    {
+        NameBox.Text = "";
+        RemoteHostBox.Text = "";
+        RemotePortBox.Text = "";
+        ListenAddressBox.Text = "";
+        ListenPortBox.Text = "";
+        SocksHostBox.Text = "";
+        SocksPortBox.Text = "";
+    }
 
     private void OnSourceInitialized(object? sender, EventArgs e) => TitleBarDarkMode.Apply(this);
 

@@ -11,9 +11,10 @@ public partial class TransferWindow : Window
 {
     private readonly bool _export;
     private readonly List<TransferRow> _rows;
-    private readonly IReadOnlyList<TunnelRecord> _existing;
-    private readonly Func<IReadOnlyList<TunnelRecord>, string?>? _import;
-    private readonly Func<string, IReadOnlyList<TunnelRecord>, string?>? _write;
+    private List<TunnelRecord> _existing;
+    private Func<IReadOnlyList<TunnelRecord>, string?>? _import;
+    private Func<string, IReadOnlyList<TunnelRecord>, string?>? _write;
+    private bool _released;
     private bool _syncingAll;
     private bool _committing;
     private bool _focused;
@@ -22,6 +23,7 @@ public partial class TransferWindow : Window
     public TransferWindow()
     {
         InitializeComponent();
+        Closed += (_, _) => ReleaseSensitive();
         _rows = [];
         _existing = [];
     }
@@ -36,7 +38,7 @@ public partial class TransferWindow : Window
         : this()
     {
         _export = export;
-        _existing = existing;
+        _existing = existing.ToList();
         _import = import;
         _write = write;
         _rows = entries.Select(e => new TransferRow(e)).ToList();
@@ -60,6 +62,31 @@ public partial class TransferWindow : Window
     }
 
     public int CompletedCount { get; private set; }
+
+    internal int RowCount => _rows.Count;
+
+    internal int ExistingCount => _existing.Count;
+
+    internal void ReleaseSensitive()
+    {
+        if (_released)
+            return;
+        _released = true;
+        foreach (var row in _rows)
+            row.PropertyChanged -= OnRowPropertyChanged;
+        if (EntryList.ItemsSource is not null)
+        {
+            System.Windows.Data.CollectionViewSource.GetDefaultView(_rows)?.MoveCurrentTo(null);
+            EntryList.ItemsSource = null;
+        }
+
+        _rows.Clear();
+        _existing.Clear();
+        _import = null;
+        _write = null;
+        FileNameText.Text = "";
+        FileNameText.ToolTip = null;
+    }
 
     private void OnSourceInitialized(object? sender, EventArgs e) => TitleBarDarkMode.Apply(this);
 

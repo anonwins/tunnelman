@@ -1,4 +1,5 @@
 using System.Windows.Threading;
+using Tunnelman;
 using Tunnelman.Tunnels;
 
 namespace Tunnelman.Tests;
@@ -267,7 +268,9 @@ public sealed class TunnelSessionTests
             await session.StartEnabledAsync();
             var before = File.ReadAllBytes(file);
 
+            Assert.True(session.HasFileKey);
             Assert.True(session.TryLock());
+            Assert.False(session.HasFileKey);
             Assert.Equal("Locked", session.StatusText);
             Assert.Equal("Tunnels keep running. Their hosts stay hidden until you unlock.", session.GateBody);
             Assert.Empty(session.Tunnels);
@@ -282,6 +285,41 @@ public sealed class TunnelSessionTests
         }
         finally
         {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Lock_can_suspend_new_dials_until_unlock()
+    {
+        var previous = UiSettings.Current.StopDialingWhenLocked;
+        var dir = SessionTestHost.NewDir("tunnelman-session-suspend-");
+        try
+        {
+            UiSettings.Current.StopDialingWhenLocked = true;
+            var runtime = new FakeRuntime();
+            var session = SessionTestHost.Open(dir, Dispatcher.CurrentDispatcher, () => runtime);
+            Assert.True(session.TryAdd(SessionTestHost.Hop("one", 22021), out _));
+            session.Tunnels[0].Enabled = true;
+            await session.StartEnabledAsync();
+
+            Assert.True(session.TryLock());
+            Assert.False(session.HasFileKey);
+            Assert.Equal(1, runtime.SuspendCount);
+            Assert.True(runtime.DialSuspended);
+            Assert.Equal(
+                "Connections that are already open stay up. New connections wait until you unlock.",
+                session.GateBody);
+
+            Assert.True(session.TryUnlock(SessionTestHost.Passphrase, out _));
+            Assert.True(session.HasFileKey);
+            Assert.False(runtime.DialSuspended);
+            Assert.Equal(1, runtime.ResumeCount);
+            Assert.Equal(1, session.RunningCount);
+        }
+        finally
+        {
+            UiSettings.Current.StopDialingWhenLocked = previous;
             Directory.Delete(dir, recursive: true);
         }
     }
@@ -335,17 +373,39 @@ public sealed class TunnelSessionTests
     {
         public bool Disposed { get; private set; }
         public bool IsRunning { get; set; }
+        public bool DialSuspended { get; private set; }
+        public int SuspendCount { get; private set; }
+        public int ResumeCount { get; private set; }
         public TaskCompletionSource<bool>? HoldStart { get; set; }
         public TaskCompletionSource<bool> Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private IDialSecrets? _secrets;
 
         public event Action<int>? Exited;
 
         public async Task StartAsync(TunnelRecord record, IDialSecrets secrets, Action<string> log, CancellationToken cancellationToken)
         {
+            DisposeSecrets();
+            _secrets = secrets;
             Entered.TrySetResult(true);
             if (HoldStart is { } hold)
                 await hold.Task.ConfigureAwait(false);
             IsRunning = true;
+            DialSuspended = false;
+        }
+
+        public void SuspendDial()
+        {
+            DialSuspended = true;
+            SuspendCount++;
+            DisposeSecrets();
+        }
+
+        public void ResumeDial(TunnelRecord record, IDialSecrets secrets)
+        {
+            DisposeSecrets();
+            _secrets = secrets;
+            DialSuspended = false;
+            ResumeCount++;
         }
 
         public Task StopAsync()
@@ -358,6 +418,14 @@ public sealed class TunnelSessionTests
         {
             Disposed = true;
             IsRunning = false;
+            DisposeSecrets();
+        }
+
+        private void DisposeSecrets()
+        {
+            if (_secrets is IDisposable disposable)
+                disposable.Dispose();
+            _secrets = null;
         }
 
         public void RaiseExited(int code) => Exited?.Invoke(code);

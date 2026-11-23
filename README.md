@@ -9,8 +9,10 @@ Built in the same visual language as SSH Agent GUI.
 - **Named tunnels** — add, edit, and delete hops
 - **Enable switch** — turn a tunnel on or off from the list
 - **Encrypted session** — the saved list is encrypted with a passphrase asked at startup and after a lock
-- **Lock** — hide the tunnel list while hops that are already running keep accepting connections
-- **Auto-lock** — lock after the keyboard and mouse have been idle, and when the window hides to the tray
+- **Lock** — hide the tunnel list while hops that are already running keep their open connections
+- **Auto-lock** — lock after the keyboard and mouse have been idle
+- **Tray lock** — optionally lock as soon as the window hides
+- **Stop dialing when locked** — optional; open connections stay up and new ones wait until unlock
 - **Exit prompt** — keep the session, clear it, or cancel
 - **Live log** — connect and disconnect lines for the selected tunnel
 - **System tray** — minimize to the tray and keep hops running
@@ -48,8 +50,9 @@ The first launch asks for a passphrase. Settings and the encrypted tunnel sessio
 | Import tunnels | **Import**, or `Ctrl+I` |
 | Start or stop | Flip the switch on the row |
 | Edit / delete | Row buttons on the right |
-| Lock | **Lock**, or the auto-lock control beside it |
-| Hide the window | `Escape` (app stays in the tray; locks when auto-lock is on) |
+| Settings | **Settings**, next to **Lock** |
+| Lock | **Lock** |
+| Hide the window | `Escape` (app stays in the tray; locks when tray lock is on) |
 | Exit | Close the window or tray **Exit**, then keep or clear the session |
 
 ## Development

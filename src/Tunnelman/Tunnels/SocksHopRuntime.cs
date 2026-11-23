@@ -16,6 +16,7 @@ internal sealed class SocksHopRuntime : ITunnelRuntime
     private byte[]? _sealed;
     private IDialSecrets? _secrets;
     private bool _stopping;
+    private bool _dialSuspended;
 
     public bool IsRunning
     {
@@ -26,36 +27,126 @@ internal sealed class SocksHopRuntime : ITunnelRuntime
         }
     }
 
+    public bool DialSuspended
+    {
+        get
+        {
+            lock (_gate)
+                return _dialSuspended;
+        }
+    }
+
     public event Action<int>? Exited;
 
     public Task StartAsync(TunnelRecord record, IDialSecrets secrets, Action<string> log, CancellationToken cancellationToken)
     {
-        var endpoint = ResolveListen(record.ListenAddress, record.ListenPort);
-        var listener = new TcpListener(endpoint);
+        TcpListener? listener = null;
+        var owned = false;
         try
         {
+            var endpoint = ResolveListen(record.ListenAddress, record.ListenPort);
+            listener = new TcpListener(endpoint);
             listener.Server.ExclusiveAddressUse = true;
             listener.Start();
+            var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            lock (_gate)
+            {
+                _listener = listener;
+                _cts = cts;
+                _secrets = secrets;
+                owned = true;
+                listener = null;
+                _sealed = secrets.Seal(DialBlob.Encode(record));
+                _stopping = false;
+                _dialSuspended = false;
+                _accept = Task.Run(() => AcceptLoop(_listener!, log, cts.Token));
+            }
         }
-        catch (Exception ex) when (ex is SocketException or InvalidOperationException)
+        catch (Exception ex) when (!owned && (ex is SocketException or InvalidOperationException))
         {
-            listener.Server.Dispose();
+            listener?.Server.Dispose();
+            DisposeSecrets(secrets);
             throw new InvalidOperationException($"Could not listen on {record.ListenAddress.Trim()}:{record.ListenPort}");
         }
-
-        var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        lock (_gate)
+        catch
         {
-            _listener = listener;
-            _cts = cts;
-            _secrets = secrets;
-            _sealed = secrets.Seal(DialBlob.Encode(record));
-            _stopping = false;
-            _accept = Task.Run(() => AcceptLoop(listener, log, cts.Token));
+            if (!owned)
+            {
+                if (listener is not null)
+                {
+                    try
+                    {
+                        listener.Stop();
+                    }
+                    catch (SocketException)
+                    {
+                    }
+
+                    listener.Server.Dispose();
+                }
+
+                DisposeSecrets(secrets);
+            }
+
+            throw;
         }
 
         log("Listening");
         return Task.CompletedTask;
+    }
+
+    public void SuspendDial()
+    {
+        IDialSecrets? secrets;
+        byte[]? sealedBlob;
+        lock (_gate)
+        {
+            if (_listener is null || _stopping)
+                return;
+            _dialSuspended = true;
+            secrets = _secrets;
+            _secrets = null;
+            sealedBlob = _sealed;
+            _sealed = null;
+        }
+
+        Zero(sealedBlob);
+        DisposeSecrets(secrets);
+    }
+
+    public void ResumeDial(TunnelRecord record, IDialSecrets secrets)
+    {
+        byte[] sealedBlob;
+        try
+        {
+            sealedBlob = secrets.Seal(DialBlob.Encode(record));
+        }
+        catch
+        {
+            DisposeSecrets(secrets);
+            throw;
+        }
+
+        byte[]? replaced;
+        IDialSecrets? previous;
+        lock (_gate)
+        {
+            if (_listener is null || _stopping)
+            {
+                Zero(sealedBlob);
+                DisposeSecrets(secrets);
+                return;
+            }
+
+            previous = _secrets;
+            replaced = _sealed;
+            _secrets = secrets;
+            _sealed = sealedBlob;
+            _dialSuspended = false;
+        }
+
+        Zero(replaced);
+        DisposeSecrets(previous);
     }
 
     public async Task StopAsync()
@@ -169,18 +260,40 @@ internal sealed class SocksHopRuntime : ITunnelRuntime
 
     private async Task<TcpClient?> DialAsync(Action<string> log, CancellationToken cancellationToken)
     {
-        byte[]? sealedBlob;
+        byte[]? sealedCopy;
         IDialSecrets? secrets;
         lock (_gate)
         {
-            sealedBlob = _sealed;
             secrets = _secrets;
+            if (_sealed is null)
+                sealedCopy = null;
+            else
+            {
+                sealedCopy = GC.AllocateUninitializedArray<byte>(_sealed.Length);
+                _sealed.AsSpan().CopyTo(sealedCopy);
+            }
         }
 
-        if (sealedBlob is null || secrets is null)
+        if (sealedCopy is null || secrets is null)
             return null;
 
-        if (!TryOpenDial(secrets, sealedBlob, out var socksHost, out var socksPort, out var remoteHost, out var remoteCopy, out var remotePort))
+        try
+        {
+            return await DialOpenedAsync(secrets, sealedCopy, log, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            Zero(sealedCopy);
+        }
+    }
+
+    private async Task<TcpClient?> DialOpenedAsync(
+        IDialSecrets secrets,
+        byte[] sealedCopy,
+        Action<string> log,
+        CancellationToken cancellationToken)
+    {
+        if (!TryOpenDial(secrets, sealedCopy, out var socksHost, out var socksPort, out var remoteHost, out var remoteCopy, out var remotePort))
         {
             log("Connection failed");
             return null;
@@ -270,7 +383,7 @@ internal sealed class SocksHopRuntime : ITunnelRuntime
             remoteCopy = remoteBytes.ToArray();
             return true;
         }
-        catch (AuthenticationTagMismatchException)
+        catch (Exception ex) when (ex is AuthenticationTagMismatchException or ObjectDisposedException)
         {
             return false;
         }
@@ -395,18 +508,19 @@ internal sealed class SocksHopRuntime : ITunnelRuntime
         TcpListener? listener;
         CancellationTokenSource? cts;
         TcpClient[] clients;
+        IDialSecrets? secrets;
+        byte[]? sealedBlob;
         lock (_gate)
         {
             listener = _listener;
             cts = _cts;
+            secrets = _secrets;
             _listener = null;
             _cts = null;
             _secrets = null;
-            if (_sealed is not null)
-            {
-                CryptographicOperations.ZeroMemory(_sealed);
-                _sealed = null;
-            }
+            _dialSuspended = false;
+            sealedBlob = _sealed;
+            _sealed = null;
 
             clients = _clients.ToArray();
             _clients.Clear();
@@ -431,6 +545,20 @@ internal sealed class SocksHopRuntime : ITunnelRuntime
         foreach (var client in clients)
             client.Dispose();
         cts?.Dispose();
+        Zero(sealedBlob);
+        DisposeSecrets(secrets);
+    }
+
+    private static void Zero(byte[]? bytes)
+    {
+        if (bytes is not null)
+            CryptographicOperations.ZeroMemory(bytes);
+    }
+
+    private static void DisposeSecrets(IDialSecrets? secrets)
+    {
+        if (secrets is IDisposable disposable)
+            disposable.Dispose();
     }
 }
 

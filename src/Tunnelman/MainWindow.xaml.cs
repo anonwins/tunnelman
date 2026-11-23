@@ -16,21 +16,11 @@ public partial class MainWindow : Window
     public static readonly RoutedCommand ImportCommand = new();
     public static readonly RoutedCommand HideCommand = new();
 
-    private static readonly (int Seconds, string Label)[] AutoLockChoices =
-    [
-        (0, "Don't auto-lock"),
-        (30, "After 30 seconds idle"),
-        (60, "After 1 minute idle"),
-        (300, "After 5 minutes idle"),
-        (900, "After 15 minutes idle"),
-    ];
-
     private readonly TunnelSession _session;
     private readonly DispatcherTimer _idleTimer;
     private bool _allowClose;
     private bool _exitPromptOpen;
     private bool _gateBusy;
-    private bool _loadingAutoLock = true;
     private bool _locking;
     private DateTime _lastInputUtc = DateTime.UtcNow;
     private TunnelItem? _logItem;
@@ -40,12 +30,6 @@ public partial class MainWindow : Window
         _session = session;
         DataContext = session;
         InitializeComponent();
-        foreach (var choice in AutoLockChoices)
-            AutoLockBox.Items.Add(choice.Label);
-        var selected = UiSettings.NormalizeAutoLock(UiSettings.Current.AutoLockSeconds);
-        var index = Array.FindIndex(AutoLockChoices, choice => choice.Seconds == selected);
-        AutoLockBox.SelectedIndex = index < 0 ? 0 : index;
-        _loadingAutoLock = false;
         LogCard.Visibility = Visibility.Collapsed;
         GateButtonText.Text = _session.ShowConfirm ? "Create session" : "Unlock";
         ConfirmBox.Visibility = _session.ShowConfirm ? Visibility.Visible : Visibility.Collapsed;
@@ -84,7 +68,7 @@ public partial class MainWindow : Window
 
     private void LockIfHidden()
     {
-        if (UiSettings.Current.AutoLockSeconds <= 0 || IsVisible || _allowClose || !_session.CanLock)
+        if (!UiSettings.Current.LockWhenHidden || IsVisible || _allowClose || !_session.CanLock)
             return;
         BeginLock();
     }
@@ -292,8 +276,14 @@ public partial class MainWindow : Window
     {
         var dialog = new EditTunnelWindow { Owner = IsVisible ? this : null };
         if (dialog.ShowDialog() != true || dialog.Draft is null)
+        {
+            dialog.ReleaseDraft();
             return;
-        if (!_session.TryAdd(dialog.Draft, out var error))
+        }
+
+        var draft = dialog.Draft;
+        dialog.ReleaseDraft();
+        if (!_session.TryAdd(draft, out var error))
         {
             MessageBox.Show(this, error, "Tunnelman", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
@@ -305,10 +295,16 @@ public partial class MainWindow : Window
             return;
         var dialog = new EditTunnelWindow(item) { Owner = IsVisible ? this : null };
         if (dialog.ShowDialog() != true || dialog.Draft is null)
+        {
+            dialog.ReleaseDraft();
             return;
+        }
+
+        var draft = dialog.Draft;
+        dialog.ReleaseDraft();
         try
         {
-            await _session.ApplyEditAsync(item, dialog.Draft).ConfigureAwait(true);
+            await _session.ApplyEditAsync(item, draft).ConfigureAwait(true);
         }
         catch (Exception ex)
         {
@@ -441,6 +437,15 @@ public partial class MainWindow : Window
             _idleTimer.Start();
     }
 
+    private void OnSettingsClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new SettingsWindow { Owner = this };
+        if (dialog.ShowDialog() != true)
+            return;
+        NoteInput();
+        EnsureIdleTimer();
+    }
+
     private void OnIdleTick(object? sender, EventArgs e)
     {
         if (!_session.ShowSession || UiSettings.Current.AutoLockSeconds <= 0)
@@ -454,15 +459,6 @@ public partial class MainWindow : Window
         if (!_session.CanLock || _locking)
             return;
         BeginLock();
-    }
-
-    private void OnAutoLockChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_loadingAutoLock || AutoLockBox.SelectedIndex < 0)
-            return;
-        UiSettings.Current.SetAutoLockSeconds(AutoLockChoices[AutoLockBox.SelectedIndex].Seconds);
-        NoteInput();
-        EnsureIdleTimer();
     }
 
     private void OnLockClick(object sender, RoutedEventArgs e) => BeginLock();
@@ -501,10 +497,10 @@ public partial class MainWindow : Window
     private void FinishLock()
     {
         _locking = false;
-        if (!_session.TryLock())
-            return;
         TunnelList.SelectedItem = null;
         LogBox.Clear();
+        if (!_session.TryLock())
+            return;
         ShowGateError("");
         PassphraseBox.Clear();
         ConfirmBox.Clear();

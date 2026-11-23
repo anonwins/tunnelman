@@ -21,6 +21,7 @@ public partial class ExportUnlockWindow : Window
         _iterations = iterations;
         _read = read;
         Loaded += (_, _) => PassphraseBox.Focus();
+        Closed += (_, _) => PassphraseBox.Clear();
     }
 
     private void OnSourceInitialized(object? sender, EventArgs e) => TitleBarDarkMode.Apply(this);
@@ -70,6 +71,7 @@ public partial class ExportUnlockWindow : Window
             if (result.Status == ExportReadStatus.Ok)
             {
                 Records = result.Tunnels;
+                PassphraseBox.Clear();
                 DialogResult = true;
                 return;
             }

@@ -76,7 +76,9 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
     public string GateBody => _mode switch
     {
         SessionView.Create => "This passphrase encrypts the saved tunnels. Tunnelman asks for it at startup and after a lock.",
-        SessionView.Locked => "Tunnels keep running. Their hosts stay hidden until you unlock.",
+        SessionView.Locked => Tunnelman.UiSettings.Current.StopDialingWhenLocked
+            ? "Connections that are already open stay up. New connections wait until you unlock."
+            : "Tunnels keep running. Their hosts stay hidden until you unlock.",
         _ => "Enter the passphrase to show the saved tunnels. Enabled tunnels start after they appear.",
     };
 
@@ -101,6 +103,8 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
         : Tunnels.Count(item => item.Status == TunnelStatus.Running);
 
     internal SessionKey? Key => _mode == SessionView.Open ? _key : null;
+
+    internal bool HasFileKey => _key is not null;
 
     public bool AnyBusy => Tunnels.Any(item => item.IsBusy);
 
@@ -229,6 +233,15 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
     {
         if (!CanLock)
             return false;
+        if (Tunnelman.UiSettings.Current.StopDialingWhenLocked)
+        {
+            foreach (var slot in _slots.Values)
+            {
+                if (slot.Runtime is { IsRunning: true } runtime)
+                    runtime.SuspendDial();
+            }
+        }
+
         var items = Tunnels.ToList();
         SetMode(SessionView.Locked);
         foreach (var item in items)
@@ -239,6 +252,8 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
 
         Tunnels.Clear();
         RefreshSummary();
+        _key?.Dispose();
+        _key = null;
         return true;
     }
 
@@ -511,15 +526,17 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
         var slot = existing ?? new HopSlot(item.Id);
         _slots[item.Id] = slot;
         var runtime = _createRuntime?.Invoke() ?? new SocksHopRuntime();
-        void OnExit(int code) => OnRuntimeExited(item.Id, runtime, code);
+        var id = item.Id;
+        void OnExit(int code) => OnRuntimeExited(id, runtime, code);
         runtime.Exited += OnExit;
         slot.Runtime = runtime;
         slot.Stopping = false;
         slot.Status = TunnelStatus.Starting;
         item.SetRuntime(runtime);
+        var dial = _key.DeriveDial();
         try
         {
-            await runtime.StartAsync(item.Record, _key, line => PostLog(item, line), CancellationToken.None).ConfigureAwait(true);
+            await runtime.StartAsync(item.Record, dial, line => PostLog(id, line), CancellationToken.None).ConfigureAwait(true);
             if (_disposed || slot.Runtime != runtime)
             {
                 runtime.Exited -= OnExit;
@@ -617,21 +634,18 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
         }
     }
 
-    private void PostLog(TunnelItem item, string line)
+    private void PostLog(Guid id, string line)
     {
         if (_disposed || _mode == SessionView.Locked)
             return;
         if (_dispatcher.CheckAccess())
-        {
-            if (Tunnels.Contains(item))
-                item.AppendLog(line);
-        }
+            FindItem(id)?.AppendLog(line);
         else
         {
             _dispatcher.BeginInvoke(() =>
             {
-                if (!_disposed && _mode != SessionView.Locked && Tunnels.Contains(item))
-                    item.AppendLog(line);
+                if (!_disposed && _mode != SessionView.Locked)
+                    FindItem(id)?.AppendLog(line);
             });
         }
     }
@@ -750,8 +764,12 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
             if (_slots.TryGetValue(item.Id, out var slot))
             {
                 item.SetRuntime(slot.Runtime);
-                if (slot.Runtime?.IsRunning == true)
+                if (slot.Runtime is { IsRunning: true } runtime)
+                {
                     item.Mark(TunnelStatus.Running);
+                    if (runtime.DialSuspended && _key is not null)
+                        runtime.ResumeDial(item.Record, _key.DeriveDial());
+                }
                 else if (slot.Status == TunnelStatus.Failed)
                     item.Mark(TunnelStatus.Failed);
             }

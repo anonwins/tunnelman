@@ -225,7 +225,7 @@ internal sealed class TunnelStore
         {
             Tunnels = tunnels.Select(t => t.Clone()).ToList(),
         };
-        var plain = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload, JsonOptions));
+        var plain = JsonSerializer.SerializeToUtf8Bytes(payload, JsonOptions);
         byte[] nonce;
         byte[] cipher;
         try

@@ -108,6 +108,125 @@ public sealed class SocksHopRuntimeTests
         }
     }
 
+    [Fact]
+    public async Task Suspend_keeps_the_open_relay_and_blocks_the_next_dial()
+    {
+        using var echo = new TcpListener(IPAddress.Loopback, 0);
+        echo.Start();
+        var echoPort = ((IPEndPoint)echo.LocalEndpoint).Port;
+        using var listen = new TcpListener(IPAddress.Loopback, 0);
+        listen.Start();
+        var listenPort = ((IPEndPoint)listen.LocalEndpoint).Port;
+        listen.Stop();
+
+        using var echoStop = new CancellationTokenSource();
+        var echoTask = Task.Run(async () =>
+        {
+            try
+            {
+                while (!echoStop.IsCancellationRequested)
+                {
+                    var client = await echo.AcceptTcpClientAsync(echoStop.Token);
+                    _ = EchoAsync(client);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        });
+
+        var dir = SessionTestHost.NewDir("tunnelman-suspend-");
+        try
+        {
+            var record = SessionTestHost.Hop("direct", listenPort);
+            record.SocksHost = "";
+            record.SocksPort = 0;
+            record.RemoteHost = "127.0.0.1";
+            record.RemotePort = echoPort;
+            var store = new TunnelStore(Path.Combine(dir, "tunnels.json"));
+            var key = store.Create(SessionTestHost.Passphrase, 1, []);
+            Assert.NotNull(key);
+            var dial = key.DeriveDial();
+            var later = key.DeriveDial();
+            var runtime = new SocksHopRuntime();
+            await runtime.StartAsync(record, dial, _ => { }, CancellationToken.None);
+            key.Dispose();
+
+            using (var client = new TcpClient())
+            {
+                await client.ConnectAsync(IPAddress.Loopback, listenPort);
+                var stream = client.GetStream();
+                await stream.WriteAsync("keep"u8.ToArray());
+                var kept = new byte[4];
+                await ReadExact(stream, kept);
+                Assert.Equal("keep"u8.ToArray(), kept);
+
+                runtime.SuspendDial();
+                Assert.True(runtime.DialSuspended);
+                Assert.Throws<ObjectDisposedException>(() => dial.Seal([1]));
+
+                await stream.WriteAsync("open"u8.ToArray());
+                var still = new byte[4];
+                await ReadExact(stream, still);
+                Assert.Equal("open"u8.ToArray(), still);
+            }
+
+            using (var blocked = new TcpClient())
+            {
+                await blocked.ConnectAsync(IPAddress.Loopback, listenPort);
+                var blockedStream = blocked.GetStream();
+                var probe = new byte[1];
+                var read = await blockedStream.ReadAsync(probe).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.Equal(0, read);
+            }
+
+            runtime.ResumeDial(record, later);
+            Assert.False(runtime.DialSuspended);
+            await RoundTrip(listenPort, "next");
+            await runtime.StopAsync();
+            Assert.Throws<ObjectDisposedException>(() => later.Seal([1]));
+        }
+        finally
+        {
+            echoStop.Cancel();
+            echo.Stop();
+            try
+            {
+                await echoTask.WaitAsync(TimeSpan.FromSeconds(2));
+            }
+            catch (Exception ex) when (ex is TimeoutException or OperationCanceledException or SocketException or IOException)
+            {
+            }
+
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    private static async Task EchoAsync(TcpClient client)
+    {
+        using (client)
+        {
+            var stream = client.GetStream();
+            var buffer = new byte[8];
+            while (true)
+            {
+                int read;
+                try
+                {
+                    read = await stream.ReadAsync(buffer);
+                }
+                catch (IOException)
+                {
+                    return;
+                }
+
+                if (read == 0)
+                    return;
+                await stream.WriteAsync(buffer.AsMemory(0, read));
+            }
+        }
+    }
+
     private static async Task RoundTrip(int port, string payload)
     {
         using var client = new TcpClient();
