@@ -25,10 +25,10 @@ internal sealed class TunnelRecord
     public int ListenPort { get; set; } = 22001;
 
     [JsonPropertyName("socksHost")]
-    public string SocksHost { get; set; } = "127.0.0.1";
+    public string SocksHost { get; set; } = "";
 
     [JsonPropertyName("socksPort")]
-    public int SocksPort { get; set; } = 25560;
+    public int SocksPort { get; set; }
 
     [JsonPropertyName("remoteHost")]
     public string RemoteHost { get; set; } = "";
@@ -57,19 +57,41 @@ internal sealed class TunnelRecord
         RemotePort = RemotePort,
     };
 
+    public const string SocksPairRequired = "Enter a SOCKS5 host and port, or leave both empty.";
+
     public bool TryValidateEndpoints(out string error)
     {
         if (!TryValidateHost(ListenAddress, out error))
             return false;
         if (!TryValidatePort(ListenPort, out error))
             return false;
-        if (!TryValidateHost(SocksHost, out error))
-            return false;
-        if (!TryValidatePort(SocksPort, out error))
+        if (!TryValidateSocks(out error))
             return false;
         if (!TryValidateHost(RemoteHost, out error))
             return false;
         return TryValidatePort(RemotePort, out error);
+    }
+
+    private bool TryValidateSocks(out string error)
+    {
+        var hostBlank = string.IsNullOrWhiteSpace(SocksHost);
+        var portUnset = SocksPort == 0;
+        if (hostBlank && portUnset)
+        {
+            error = "";
+            return true;
+        }
+
+        if (!hostBlank && !TryValidateHost(SocksHost, out error))
+            return false;
+        if (hostBlank || portUnset || !TryValidatePort(SocksPort, out _))
+        {
+            error = SocksPairRequired;
+            return false;
+        }
+
+        error = "";
+        return true;
     }
 
     public static bool TryValidateHost(string? host, out string error)

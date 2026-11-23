@@ -55,7 +55,7 @@
         <TextBox x:Name="SocksPortBox" Grid.Row="5" Grid.Column="2" Margin="0,0,0,10"/>
 
         <TextBlock Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="2"
-                   Text="Host and port. Enable the tunnel from the list when you want it running."
+                   Text="SOCKS5 is optional. Leave it empty to connect directly from this PC."
                    Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,0,0,0"/>
 
         <StackPanel Grid.Row="9" Grid.ColumnSpan="3" Orientation="Horizontal" HorizontalAlignment="Right">

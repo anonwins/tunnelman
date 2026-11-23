@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Tunnelman.Tunnels;
 
@@ -15,20 +17,28 @@ public sealed class TunnelTransferTests
             var record = SessionTestHost.Hop("office", 22001);
             record.Id = Guid.NewGuid();
             record.Enabled = true;
-            TunnelTransfer.Write(file, [record]);
+            using var material = SessionTestHost.CreateKey();
+            TunnelTransfer.Write(file, [record], material.Key, material.Salt, material.Iterations);
 
             var text = File.ReadAllText(file);
-            Assert.Contains("\"format\":", text, StringComparison.Ordinal);
-            Assert.DoesNotContain("\"enabled\"", text, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain("\"kind\"", text, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("example.test", text, StringComparison.Ordinal);
             using var doc = JsonDocument.Parse(text);
             var root = doc.RootElement;
-            Assert.Equal(TunnelTransfer.FormatName, root.GetProperty("format").GetString());
-            Assert.Equal(1, root.GetProperty("version").GetInt32());
-            Assert.Equal(TimeSpan.Zero, root.GetProperty("exportedAt").GetDateTimeOffset().Offset);
+            Assert.Equal("export", root.GetProperty("purpose").GetString());
+            Assert.False(root.TryGetProperty("format", out _));
+            Assert.False(root.TryGetProperty("tunnels", out _));
+            var cipher = Convert.FromBase64String(root.GetProperty("ciphertext").GetString()!);
+            var nonce = Convert.FromBase64String(root.GetProperty("nonce").GetString()!);
+            Assert.Throws<AuthenticationTagMismatchException>(() => material.Key.Decrypt(nonce, cipher));
+            var inner = JsonDocument.Parse(material.Key.Decrypt(nonce, cipher, TunnelCipher.ExportAssociatedData));
+            Assert.Equal(TunnelTransfer.FormatName, inner.RootElement.GetProperty("format").GetString());
+            Assert.Equal(1, inner.RootElement.GetProperty("version").GetInt32());
+            Assert.Equal(TimeSpan.Zero, inner.RootElement.GetProperty("exportedAt").GetDateTimeOffset().Offset);
+            Assert.False(inner.RootElement.GetRawText().Contains("\"enabled\"", StringComparison.OrdinalIgnoreCase));
 
-            Assert.True(TunnelTransfer.TryRead(file, out var records, out var error));
-            Assert.Equal("", error);
+            var opened = TunnelTransfer.Read(file, material.Key);
+            Assert.Equal(ExportReadStatus.Ok, opened.Status);
+            var records = opened.Tunnels;
             var loaded = Assert.Single(records);
             Assert.Equal(record.Id, loaded.Id);
             Assert.Equal("office", loaded.Name);
@@ -44,12 +54,12 @@ public sealed class TunnelTransferTests
 
     [Theory]
     [InlineData("{not json", TunnelTransfer.NotExport)]
-    [InlineData("""{"format":"tunnelman-export","version":2,"tunnels":[]}""", TunnelTransfer.NotExport)]
-    [InlineData("""{"format":null,"version":1,"tunnels":[]}""", TunnelTransfer.NotExport)]
-    [InlineData("""{"format":"","version":1,"tunnels":[]}""", TunnelTransfer.NotExport)]
-    [InlineData("""{"format":"other","version":1,"tunnels":[]}""", TunnelTransfer.NotExport)]
-    [InlineData("""{"format":"tunnelman-export","version":1,"tunnels":[]}""", TunnelTransfer.NoTunnels)]
-    [InlineData("""{"format":"tunnelman-export","version":"1","tunnels":[{"name":"a"}]}""", TunnelTransfer.NotExport)]
+    [InlineData("""{"format":"tunnelman-export","version":2,"tunnels":[]}""", TunnelTransfer.NotEncrypted)]
+    [InlineData("""{"format":null,"version":1,"tunnels":[]}""", TunnelTransfer.NotEncrypted)]
+    [InlineData("""{"format":"","version":1,"tunnels":[]}""", TunnelTransfer.NotEncrypted)]
+    [InlineData("""{"format":"other","version":1,"tunnels":[]}""", TunnelTransfer.NotEncrypted)]
+    [InlineData("""{"format":"tunnelman-export","version":1,"tunnels":[]}""", TunnelTransfer.NotEncrypted)]
+    [InlineData("""{"format":"tunnelman-export","version":"1","tunnels":[{"name":"a"}]}""", TunnelTransfer.NotEncrypted)]
     public void TryRead_rejects_bad_files(string json, string expected)
     {
         var dir = SessionTestHost.NewDir("tunnelman-xfer-bad-");
@@ -57,8 +67,10 @@ public sealed class TunnelTransferTests
         {
             var file = Path.Combine(dir, "x.json");
             File.WriteAllText(file, json);
-            Assert.False(TunnelTransfer.TryRead(file, out _, out var error));
-            Assert.Equal(expected, error);
+            using var material = SessionTestHost.CreateKey();
+            var read = TunnelTransfer.Read(file, material.Key);
+            Assert.NotEqual(ExportReadStatus.Ok, read.Status);
+            Assert.Equal(expected, read.Error);
         }
         finally
         {
@@ -73,9 +85,11 @@ public sealed class TunnelTransferTests
         try
         {
             var file = Path.Combine(dir, "x.json");
-            File.WriteAllText(file, """{"format":"tunnelman-export","version":1,"tunnels":[{"name":"bad","remoteHost":"example.test","listenPort":"22001","listenAddress":"127.0.0.1","socksHost":"127.0.0.1","socksPort":25560,"remotePort":22}]}""");
-            Assert.False(TunnelTransfer.TryRead(file, out _, out var error));
-            Assert.Equal(TunnelTransfer.NotExport, error);
+            using var material = SessionTestHost.CreateKey();
+            WriteInner(file, material, """{"format":"tunnelman-export","version":1,"tunnels":[{"name":"bad","remoteHost":"example.test","listenPort":"22001","listenAddress":"127.0.0.1","socksHost":"127.0.0.1","socksPort":25560,"remotePort":22}]}""");
+            var read = TunnelTransfer.Read(file, material.Key);
+            Assert.Equal(ExportReadStatus.NotExport, read.Status);
+            Assert.Equal(TunnelTransfer.NotExport, read.Error);
         }
         finally
         {
@@ -90,9 +104,11 @@ public sealed class TunnelTransferTests
         try
         {
             var file = Path.Combine(dir, "x.json");
-            File.WriteAllText(file, """{"format":"Tunnelman-Export","version":1,"tunnels":[{"name":"a","remoteHost":"example.test","listenPort":22001,"listenAddress":"127.0.0.1","socksHost":"127.0.0.1","socksPort":25560,"remotePort":22}]}""");
-            Assert.True(TunnelTransfer.TryRead(file, out var records, out _));
-            Assert.Equal("a", Assert.Single(records).Name);
+            using var material = SessionTestHost.CreateKey();
+            WriteInner(file, material, """{"format":"Tunnelman-Export","version":1,"exportedAt":"2026-01-01T00:00:00Z","tunnels":[{"name":"a","remoteHost":"example.test","listenPort":22001,"listenAddress":"127.0.0.1","socksHost":"127.0.0.1","socksPort":25560,"remotePort":22}]}""");
+            var read = TunnelTransfer.Read(file, material.Key);
+            Assert.Equal(ExportReadStatus.Ok, read.Status);
+            Assert.Equal("a", Assert.Single(read.Tunnels).Name);
         }
         finally
         {
@@ -203,5 +219,110 @@ public sealed class TunnelTransferTests
         Assert.Equal(@"C:\out\tunnels.tunnelman.json", TunnelTransfer.NormalizeExportPath(@"C:\out\tunnels.tunnelman.json.json"));
         Assert.Equal(@"C:\out\backup.tunnelman.json", TunnelTransfer.NormalizeExportPath(@"C:\out\backup"));
         Assert.Equal(@"C:\out\a.json", TunnelTransfer.NormalizeExportPath(@"C:\out\a.json"));
+    }
+
+    [Fact]
+    public void Wrong_passphrase_leaves_the_export_unchanged()
+    {
+        var dir = SessionTestHost.NewDir("tunnelman-xfer-wrong-");
+        try
+        {
+            using var material = SessionTestHost.CreateKey();
+            var file = Path.Combine(dir, "tunnels.tunnelman.json");
+            var record = SessionTestHost.Hop("office", 22001);
+            TunnelTransfer.Write(file, [record], material.Key, material.Salt, material.Iterations);
+            var before = File.ReadAllBytes(file);
+            using var other = SessionKey.Derive("other-passphrase", material.Salt, material.Iterations);
+            var read = TunnelTransfer.Read(file, other);
+            Assert.Equal(ExportReadStatus.WrongPassphrase, read.Status);
+            Assert.Equal(TunnelSession.WrongPassphrase, read.Error);
+            Assert.Equal(material.Iterations, read.Iterations);
+            Assert.Equal(material.Salt, read.Salt);
+            Assert.Equal(before, File.ReadAllBytes(file));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Decrypted_empty_list_has_no_tunnels()
+    {
+        var dir = SessionTestHost.NewDir("tunnelman-xfer-empty-");
+        try
+        {
+            using var material = SessionTestHost.CreateKey();
+            var file = Path.Combine(dir, "x.json");
+            WriteInner(file, material, """{"format":"tunnelman-export","version":1,"tunnels":[]}""");
+            var read = TunnelTransfer.Read(file, material.Key);
+            Assert.Equal(ExportReadStatus.NoTunnels, read.Status);
+            Assert.Equal(TunnelTransfer.NoTunnels, read.Error);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Session_file_is_not_an_export_and_export_on_session_path_is_foreign()
+    {
+        var dir = SessionTestHost.NewDir("tunnelman-xfer-session-");
+        try
+        {
+            var sessionPath = Path.Combine(dir, "tunnels.json");
+            var store = new TunnelStore(sessionPath);
+            var key = store.Create(SessionTestHost.Passphrase, 1, [SessionTestHost.Hop("office", 22001)]);
+            Assert.NotNull(key);
+            var sessionText = File.ReadAllText(sessionPath);
+            using (var sessionDoc = JsonDocument.Parse(sessionText))
+                Assert.False(sessionDoc.RootElement.TryGetProperty("purpose", out _));
+
+            var read = TunnelTransfer.Read(sessionPath, key);
+            Assert.Equal(ExportReadStatus.NotExport, read.Status);
+            key.Dispose();
+
+            using var material = SessionTestHost.CreateKey();
+            var beforeSession = File.ReadAllBytes(sessionPath);
+            TunnelTransfer.Write(sessionPath, [SessionTestHost.Hop("office", 22001)], material.Key, material.Salt, material.Iterations);
+            var exportStore = new TunnelStore(sessionPath);
+            Assert.Equal(TunnelProbeKind.Foreign, exportStore.Probe().Kind);
+            var exportBytes = File.ReadAllBytes(sessionPath);
+            Assert.Equal(TunnelProbeKind.Foreign, exportStore.Probe().Kind);
+            Assert.Equal(exportBytes, File.ReadAllBytes(sessionPath));
+            Assert.NotEqual(beforeSession, exportBytes);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    private static void WriteInner(string path, SessionTestHost.TestMaterial material, string inner)
+    {
+        var plain = Encoding.UTF8.GetBytes(inner);
+        byte[] nonce;
+        byte[] cipher;
+        try
+        {
+            cipher = material.Key.Encrypt(plain, TunnelCipher.ExportAssociatedData, out nonce);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(plain);
+        }
+
+        var envelope = new ExportEnvelope
+        {
+            Version = TunnelCipher.Version,
+            Purpose = "export",
+            Kdf = TunnelCipher.KdfName,
+            Iterations = material.Iterations,
+            Salt = Convert.ToBase64String(material.Salt),
+            Nonce = Convert.ToBase64String(nonce),
+            Ciphertext = Convert.ToBase64String(cipher),
+        };
+        File.WriteAllText(path, JsonSerializer.Serialize(envelope, TunnelStore.JsonOptions));
     }
 }

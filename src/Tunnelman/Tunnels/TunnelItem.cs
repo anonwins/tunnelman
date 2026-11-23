@@ -44,6 +44,7 @@ internal sealed class TunnelItem : INotifyPropertyChanged
     public string RemoteText => Record.RemoteText;
     public string ProxyText => Record.ProxyText;
     public bool HasProxy => Record.HasProxy;
+    public bool IsDirect => !HasProxy;
 
     public TunnelStatus Status
     {
@@ -103,6 +104,7 @@ internal sealed class TunnelItem : INotifyPropertyChanged
         OnPropertyChanged(nameof(RemoteText));
         OnPropertyChanged(nameof(ProxyText));
         OnPropertyChanged(nameof(HasProxy));
+        OnPropertyChanged(nameof(IsDirect));
         OnPropertyChanged(nameof(CanToggle));
         OnPropertyChanged(nameof(CanMutate));
         OnPropertyChanged(nameof(Enabled));

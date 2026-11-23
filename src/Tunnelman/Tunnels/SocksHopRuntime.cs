@@ -182,10 +182,11 @@ internal sealed class SocksHopRuntime : ITunnelRuntime
 
         if (!TryOpenDial(secrets, sealedBlob, out var socksHost, out var socksPort, out var remoteHost, out var remoteCopy, out var remotePort))
         {
-            log("Proxy connection failed");
+            log("Connection failed");
             return null;
         }
 
+        var direct = socksHost.Length == 0 || socksPort == 0;
         try
         {
             var proxy = new TcpClient();
@@ -194,31 +195,38 @@ internal sealed class SocksHopRuntime : ITunnelRuntime
             byte[]? request = null;
             try
             {
-                await proxy.ConnectAsync(socksHost, socksPort, timeout.Token).ConfigureAwait(false);
-                var stream = proxy.GetStream();
-                await stream.WriteAsync(new byte[] { 0x05, 0x01, 0x00 }, timeout.Token).ConfigureAwait(false);
-                var method = new byte[2];
-                await ReadExactAsync(stream, method, timeout.Token).ConfigureAwait(false);
-                if (method[0] != 0x05 || method[1] != 0x00)
+                if (direct)
                 {
-                    proxy.Dispose();
-                    log("Proxy requires authentication");
-                    return null;
+                    await proxy.ConnectAsync(remoteHost, remotePort, timeout.Token).ConfigureAwait(false);
                 }
-
-                request = BuildConnect(remoteHost, remoteCopy, remotePort);
-                await stream.WriteAsync(request, timeout.Token).ConfigureAwait(false);
-                if (!await ReadReplyAsync(stream, timeout.Token).ConfigureAwait(false))
+                else
                 {
-                    proxy.Dispose();
-                    log("Proxy refused the connection");
-                    return null;
+                    await proxy.ConnectAsync(socksHost, socksPort, timeout.Token).ConfigureAwait(false);
+                    var stream = proxy.GetStream();
+                    await stream.WriteAsync(new byte[] { 0x05, 0x01, 0x00 }, timeout.Token).ConfigureAwait(false);
+                    var method = new byte[2];
+                    await ReadExactAsync(stream, method, timeout.Token).ConfigureAwait(false);
+                    if (method[0] != 0x05 || method[1] != 0x00)
+                    {
+                        proxy.Dispose();
+                        log("Proxy requires authentication");
+                        return null;
+                    }
+
+                    request = BuildConnect(remoteHost, remoteCopy, remotePort);
+                    await stream.WriteAsync(request, timeout.Token).ConfigureAwait(false);
+                    if (!await ReadReplyAsync(stream, timeout.Token).ConfigureAwait(false))
+                    {
+                        proxy.Dispose();
+                        log("Proxy refused the connection");
+                        return null;
+                    }
                 }
             }
             catch (Exception ex) when (ex is OperationCanceledException or SocketException or IOException)
             {
                 proxy.Dispose();
-                log("Proxy connection failed");
+                log(direct ? "Connection failed" : "Proxy connection failed");
                 return null;
             }
             finally
@@ -479,6 +487,8 @@ internal static class DialBlob
         remotePort = (data[offset] << 8) | data[offset + 1];
         socksHost = Encoding.UTF8.GetString(socks);
         remoteHost = Encoding.UTF8.GetString(remoteBytes);
-        return socksPort is >= 1 and <= 65535 && remotePort is >= 1 and <= 65535 && remoteLength > 0;
+        var direct = socksLength == 0 && socksPort == 0;
+        var proxied = socksLength > 0 && socksPort is >= 1 and <= 65535;
+        return (direct || proxied) && remotePort is >= 1 and <= 65535 && remoteLength > 0;
     }
 }

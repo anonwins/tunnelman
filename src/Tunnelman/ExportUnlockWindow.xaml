@@ -1,0 +1,48 @@
+<Window x:Class="Tunnelman.ExportUnlockWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Unlock this export"
+        Width="420"
+        MinWidth="400"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Background="{StaticResource BgBrush}"
+        Foreground="{StaticResource TextBrush}"
+        FontFamily="Segoe UI"
+        UseLayoutRounding="True"
+        SourceInitialized="OnSourceInitialized">
+    <StackPanel Margin="20">
+        <TextBlock Text="Unlock this export" FontSize="16" FontWeight="SemiBold"/>
+        <TextBlock Text="This file uses a different passphrase than the current session."
+                   Foreground="{StaticResource MutedBrush}"
+                   TextWrapping="Wrap"
+                   Margin="0,8,0,16"/>
+        <TextBlock Text="Passphrase" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,6"/>
+        <PasswordBox x:Name="PassphraseBox"
+                     Margin="0,0,0,8"
+                     KeyDown="OnKeyDown"
+                     PreviewKeyDown="OnPreviewKey"
+                     GotKeyboardFocus="OnFocus"
+                     LostKeyboardFocus="OnFocus"/>
+        <TextBlock x:Name="CapsHint"
+                   Text="Caps Lock is on."
+                   Foreground="{StaticResource MutedBrush}"
+                   Margin="0,0,0,8"
+                   Visibility="Collapsed"/>
+        <TextBlock x:Name="ErrorText"
+                   Foreground="{StaticResource DangerBrush}"
+                   TextWrapping="Wrap"
+                   Margin="0,0,0,12"
+                   Visibility="Collapsed"/>
+        <Button x:Name="UnlockButton" Style="{StaticResource PrimaryButton}" Click="OnUnlockClick" HorizontalAlignment="Stretch" Margin="0,0,0,8">
+            <TextBlock x:Name="UnlockText" Text="Unlock"
+                       Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+        </Button>
+        <Button IsCancel="True" HorizontalAlignment="Stretch">
+            <TextBlock Text="Cancel"
+                       Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+        </Button>
+    </StackPanel>
+</Window>

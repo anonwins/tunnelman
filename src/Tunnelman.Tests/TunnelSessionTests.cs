@@ -268,6 +268,8 @@ public sealed class TunnelSessionTests
             var before = File.ReadAllBytes(file);
 
             Assert.True(session.TryLock());
+            Assert.Equal("Locked", session.StatusText);
+            Assert.Equal("Tunnels keep running. Their hosts stay hidden until you unlock.", session.GateBody);
             Assert.Empty(session.Tunnels);
             Assert.Empty(session.SnapshotRecords());
             Assert.False(session.TryAdd(SessionTestHost.Hop("two", 22002), out _));

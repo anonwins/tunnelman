@@ -20,7 +20,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Tunnelman\Tunnelman.csproj" />
+    <ProjectReference Include="..\Tunnelman\Tunnelman.csproj" AdditionalProperties="BumpBuildNumber=false" />
   </ItemGroup>
 
 </Project>

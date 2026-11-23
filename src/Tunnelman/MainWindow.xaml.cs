@@ -79,6 +79,14 @@ public partial class MainWindow : Window
         SaveUi();
         Hide();
         ShowInTaskbar = false;
+        LockIfHidden();
+    }
+
+    private void LockIfHidden()
+    {
+        if (UiSettings.Current.AutoLockSeconds <= 0 || IsVisible || _allowClose || !_session.CanLock)
+            return;
+        BeginLock();
     }
 
     public void AllowCloseForShutdown() => _allowClose = true;
@@ -190,6 +198,9 @@ public partial class MainWindow : Window
             if (_session.ShowGate)
                 FocusGate();
         }
+
+        if (e.PropertyName == nameof(TunnelSession.CanLock))
+            LockIfHidden();
     }
 
     private void UpdateExportTip() =>
@@ -200,7 +211,13 @@ public partial class MainWindow : Window
         if (!_session.HasTunnels)
             return;
         var rows = TunnelTransfer.BuildExport(_session.SnapshotRecords());
-        var picker = new TransferWindow(export: true, rows, _session.SnapshotRecords(), sourcePath: null, import: null)
+        var picker = new TransferWindow(
+            export: true,
+            rows,
+            _session.SnapshotRecords(),
+            sourcePath: null,
+            import: null,
+            write: _session.WriteExport)
         {
             Owner = IsVisible ? this : null,
         };
@@ -219,9 +236,46 @@ public partial class MainWindow : Window
         };
         if (open.ShowDialog(IsVisible ? this : null) != true)
             return;
-        if (!TunnelTransfer.TryRead(open.FileName, out var records, out var error))
+        if (_session.Key is not { } key)
         {
-            MessageBox.Show(this, error, "Tunnelman", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(this, TunnelTransfer.CouldNotRead, "Tunnelman", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var read = TunnelTransfer.Read(open.FileName, key);
+        IReadOnlyList<TunnelRecord> records;
+        if (read.Status == ExportReadStatus.Ok)
+        {
+            records = read.Tunnels;
+        }
+        else if (read.Status == ExportReadStatus.WrongPassphrase)
+        {
+            var unlock = new ExportUnlockWindow(
+                read.Salt ?? [],
+                read.Iterations,
+                derived => TunnelTransfer.Read(open.FileName, derived));
+            if (IsVisible)
+            {
+                unlock.Owner = this;
+            }
+            else
+            {
+                unlock.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+                unlock.ShowInTaskbar = true;
+            }
+
+            if (unlock.ShowDialog() != true)
+            {
+                if (unlock.Failure is { } failure)
+                    MessageBox.Show(this, failure, "Tunnelman", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            records = unlock.Records;
+        }
+        else
+        {
+            MessageBox.Show(this, read.Error, "Tunnelman", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 

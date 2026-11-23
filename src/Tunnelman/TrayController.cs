@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Drawing;
+using System.Reflection;
 using System.Windows.Forms;
 using Tunnelman.Tunnels;
 
@@ -11,8 +12,8 @@ internal sealed class TrayController : IDisposable
     private readonly TunnelSession _session;
     private readonly Action _show;
     private readonly Func<Task> _exit;
-    private readonly ToolStripMenuItem _statusItem;
-    private readonly ToolStripMenuItem _countItem;
+    private readonly ToolStripMenuItem _stateItem;
+    private readonly string _version;
     private bool _disposed;
 
     public TrayController(TunnelSession session, Action show, Func<Task> exit)
@@ -20,16 +21,17 @@ internal sealed class TrayController : IDisposable
         _session = session;
         _show = show;
         _exit = exit;
+        _version = VersionText();
 
-        _statusItem = new ToolStripMenuItem(Trim(_session.StatusText, 60)) { Enabled = false };
-        _countItem = new ToolStripMenuItem(_session.RunningCountText) { Enabled = false };
+        _stateItem = new ToolStripMenuItem(StateText()) { Enabled = false };
+        var versionItem = new ToolStripMenuItem(_version) { Enabled = false };
 
         var menu = new ContextMenuStrip
         {
             Renderer = new DarkMenuRenderer(),
         };
-        menu.Items.Add(_statusItem);
-        menu.Items.Add(_countItem);
+        menu.Items.Add(_stateItem);
+        menu.Items.Add(versionItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("Open", null, (_, _) => _show()));
         menu.Items.Add(new ToolStripMenuItem("Exit", null, (_, _) => RunOnDispatcher(_exit)));
@@ -54,10 +56,7 @@ internal sealed class TrayController : IDisposable
 
     private void OnSessionPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName is not (
-            nameof(TunnelSession.StatusText)
-            or nameof(TunnelSession.RunningCount)
-            or nameof(TunnelSession.RunningCountText)))
+        if (e.PropertyName is not (nameof(TunnelSession.ShowSession) or null))
             return;
 
         void Update()
@@ -75,16 +74,18 @@ internal sealed class TrayController : IDisposable
             dispatcher.BeginInvoke(Update);
     }
 
-    private void UpdateMenu()
-    {
-        _statusItem.Text = Trim(_session.StatusText, 60);
-        _countItem.Text = _session.RunningCountText;
-    }
+    private void UpdateMenu() => _stateItem.Text = StateText();
 
-    private string TooltipText()
+    private string StateText() => _session.ShowSession ? "Unlocked" : "Locked";
+
+    private string TooltipText() => "Tunnelman - " + StateText();
+
+    private static string VersionText()
     {
-        var text = "Tunnelman — " + _session.RunningCountText;
-        return text.Length <= 63 ? text : text[..63];
+        var version = Assembly.GetExecutingAssembly()
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion;
+        return string.IsNullOrWhiteSpace(version) ? "0.1.0" : version;
     }
 
     private static void RunOnDispatcher(Func<Task> action)
@@ -97,13 +98,6 @@ internal sealed class TrayController : IDisposable
         }
 
         dispatcher.BeginInvoke(async () => await action().ConfigureAwait(true));
-    }
-
-    private static string Trim(string text, int max)
-    {
-        if (string.IsNullOrEmpty(text) || text.Length <= max)
-            return text;
-        return text[..max];
     }
 
     private static Icon LoadIcon()

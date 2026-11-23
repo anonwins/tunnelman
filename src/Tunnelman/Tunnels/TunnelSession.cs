@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 using System.Windows.Threading;
 
 namespace Tunnelman.Tunnels;
@@ -29,7 +30,6 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
     private bool _disposed;
     private bool _exitPrompt;
     private bool _freshUnlock;
-    private int _lockedSaved;
     private string _statusText = "Enter the passphrase to continue.";
     private string? _saveError;
     private string? _notice;
@@ -76,7 +76,7 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
     public string GateBody => _mode switch
     {
         SessionView.Create => "This passphrase encrypts the saved tunnels. Tunnelman asks for it at startup and after a lock.",
-        SessionView.Locked => LockedBody(),
+        SessionView.Locked => "Tunnels keep running. Their hosts stay hidden until you unlock.",
         _ => "Enter the passphrase to show the saved tunnels. Enabled tunnels start after they appear.",
     };
 
@@ -100,8 +100,7 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
         ? _slots.Values.Count(slot => slot.Runtime?.IsRunning == true)
         : Tunnels.Count(item => item.Status == TunnelStatus.Running);
 
-    public string RunningCountText =>
-        RunningCount == 1 ? "1 running" : $"{RunningCount} running";
+    internal SessionKey? Key => _mode == SessionView.Open ? _key : null;
 
     public bool AnyBusy => Tunnels.Any(item => item.IsBusy);
 
@@ -196,6 +195,25 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
         SetMode(SessionView.Open);
     }
 
+    public string? WriteExport(string path, IReadOnlyList<TunnelRecord> records)
+    {
+        if (_mode != SessionView.Open || _key is null || !_store.TryCopyMaterial(out var salt, out var iterations))
+            return TunnelTransfer.CouldNotWrite;
+        try
+        {
+            TunnelTransfer.Write(path, records, _key, salt, iterations);
+            return null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return TunnelTransfer.CouldNotWrite;
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(salt);
+        }
+    }
+
     public bool ConsumeFreshUnlock()
     {
         var fresh = _freshUnlock;
@@ -211,7 +229,6 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
     {
         if (!CanLock)
             return false;
-        _lockedSaved = Tunnels.Count;
         var items = Tunnels.ToList();
         SetMode(SessionView.Locked);
         foreach (var item in items)
@@ -776,33 +793,15 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
         RefreshSummary();
     }
 
-    private string LockedBody()
-    {
-        var running = RunningCount;
-        if (running == 0)
-            return "Nothing is listening. Unlock to see the saved tunnels.";
-        if (running == 1 && _lockedSaved == 1)
-            return "1 tunnel is still running. Its host stays hidden until you unlock.";
-        if (running == 1)
-            return $"1 of {_lockedSaved} tunnels is still running. Its host stays hidden until you unlock.";
-        return $"{running} of {_lockedSaved} tunnels are still running. Their hosts stay hidden until you unlock.";
-    }
-
-    private string LockedStatus() =>
-        RunningCount == 0
-            ? "Locked · nothing running"
-            : $"Locked · {RunningCount} of {_lockedSaved} running";
-
     private void RefreshSummary()
     {
         OnPropertyChanged(nameof(RunningCount));
-        OnPropertyChanged(nameof(RunningCountText));
         OnPropertyChanged(nameof(GateBody));
         OnPropertyChanged(nameof(CanLock));
         OnPropertyChanged(nameof(LockToolTip));
         if (_mode == SessionView.Locked)
         {
-            StatusText = LockedStatus();
+            StatusText = "Locked";
             return;
         }
 

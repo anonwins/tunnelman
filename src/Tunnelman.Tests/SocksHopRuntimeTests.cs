@@ -58,6 +58,56 @@ public sealed class SocksHopRuntimeTests
         }
     }
 
+    [Fact]
+    public async Task Direct_dial_forwards_payload_without_a_socks_greeting()
+    {
+        using var echo = new TcpListener(IPAddress.Loopback, 0);
+        echo.Start();
+        var echoPort = ((IPEndPoint)echo.LocalEndpoint).Port;
+        using var listen = new TcpListener(IPAddress.Loopback, 0);
+        listen.Start();
+        var listenPort = ((IPEndPoint)listen.LocalEndpoint).Port;
+        listen.Stop();
+
+        var seen = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var echoTask = Task.Run(async () =>
+        {
+            using var client = await echo.AcceptTcpClientAsync();
+            var stream = client.GetStream();
+            var buffer = new byte[8];
+            var read = await stream.ReadAsync(buffer);
+            var payload = buffer[..read];
+            seen.TrySetResult(payload);
+            await stream.WriteAsync(payload);
+        });
+
+        var dir = SessionTestHost.NewDir("tunnelman-direct-");
+        try
+        {
+            var record = SessionTestHost.Hop("direct", listenPort);
+            record.SocksHost = "";
+            record.SocksPort = 0;
+            record.RemoteHost = "127.0.0.1";
+            record.RemotePort = echoPort;
+            var store = new TunnelStore(Path.Combine(dir, "tunnels.json"));
+            var key = store.Create(SessionTestHost.Passphrase, 1, []);
+            Assert.NotNull(key);
+            var runtime = new SocksHopRuntime();
+            await runtime.StartAsync(record, key, _ => { }, CancellationToken.None);
+            await RoundTrip(listenPort, "direct");
+            var first = await seen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal("direct"u8.ToArray(), first);
+            await echoTask.WaitAsync(TimeSpan.FromSeconds(5));
+            await runtime.StopAsync();
+            key.Dispose();
+        }
+        finally
+        {
+            echo.Stop();
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
     private static async Task RoundTrip(int port, string payload)
     {
         using var client = new TcpClient();

@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace Tunnelman.Tunnels;
@@ -83,6 +84,23 @@ internal sealed class TunnelStore
     }
 
     public string FilePath => _filePath;
+
+    internal bool TryCopyMaterial(out byte[] salt, out int iterations)
+    {
+        lock (_gate)
+        {
+            if (_salt is null || !TunnelCipher.IterationsInRange(_iterations))
+            {
+                salt = [];
+                iterations = 0;
+                return false;
+            }
+
+            salt = _salt.ToArray();
+            iterations = _iterations;
+            return true;
+        }
+    }
 
     public TunnelProbe Probe()
     {
@@ -261,6 +279,21 @@ internal sealed class TunnelStore
         salt = [];
         nonce = [];
         cipherAndTag = [];
+        JsonNode? root;
+        try
+        {
+            root = JsonNode.Parse(text);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+
+        if (root is JsonObject obj
+            && obj["purpose"] is JsonNode purpose
+            && purpose.GetValueKind() != JsonValueKind.Null)
+            return false;
+
         var parsed = JsonSerializer.Deserialize<TunnelEnvelope>(text, JsonOptions);
         if (parsed is null)
             return false;

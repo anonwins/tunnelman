@@ -76,7 +76,7 @@
                               MinWidth="210"
                               Margin="0,0,8,0"
                               VerticalAlignment="Center"
-                              ToolTip="Lock when the keyboard and mouse have been idle."
+                              ToolTip="Lock when the keyboard and mouse have been idle, and when the window hides to the tray."
                               SelectionChanged="OnAutoLockChanged"/>
                     <Button Style="{StaticResource RowButton}"
                             Click="OnLockClick"
@@ -146,6 +146,12 @@
                                         </local:PackLeftPanel>
                                     </StackPanel>
                                     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock Text="Direct"
+                                                   Foreground="{StaticResource MutedBrush}"
+                                                   FontSize="12"
+                                                   VerticalAlignment="Center"
+                                                   Margin="0,0,6,0"
+                                                   Visibility="{Binding IsDirect, Converter={StaticResource BoolToVis}}"/>
                                         <TextBlock Text="&#xE12B;"
                                                    FontFamily="Segoe MDL2 Assets"
                                                    FontSize="13"

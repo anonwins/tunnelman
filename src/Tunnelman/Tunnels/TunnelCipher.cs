@@ -79,7 +79,10 @@ internal sealed class SessionKey : IDialSecrets, IDisposable
         }
     }
 
-    public byte[] Encrypt(ReadOnlySpan<byte> plaintext, out byte[] nonce)
+    public byte[] Encrypt(ReadOnlySpan<byte> plaintext, out byte[] nonce) =>
+        Encrypt(plaintext, TunnelCipher.AssociatedData, out nonce);
+
+    public byte[] Encrypt(ReadOnlySpan<byte> plaintext, ReadOnlySpan<byte> associatedData, out byte[] nonce)
     {
         nonce = RandomNumberGenerator.GetBytes(TunnelCipher.NonceBytes);
         var cipher = new byte[plaintext.Length + TunnelCipher.TagBytes];
@@ -88,13 +91,16 @@ internal sealed class SessionKey : IDialSecrets, IDisposable
         {
             ObjectDisposedException.ThrowIf(_key is null, this);
             using var aes = new AesGcm(_key, TunnelCipher.TagBytes);
-            aes.Encrypt(nonce, plaintext, cipher.AsSpan(0, plaintext.Length), tag, TunnelCipher.AssociatedData);
+            aes.Encrypt(nonce, plaintext, cipher.AsSpan(0, plaintext.Length), tag, associatedData);
         }
 
         return cipher;
     }
 
-    public byte[] Decrypt(ReadOnlySpan<byte> nonce, ReadOnlySpan<byte> cipherAndTag)
+    public byte[] Decrypt(ReadOnlySpan<byte> nonce, ReadOnlySpan<byte> cipherAndTag) =>
+        Decrypt(nonce, cipherAndTag, TunnelCipher.AssociatedData);
+
+    public byte[] Decrypt(ReadOnlySpan<byte> nonce, ReadOnlySpan<byte> cipherAndTag, ReadOnlySpan<byte> associatedData)
     {
         if (nonce.Length != TunnelCipher.NonceBytes || cipherAndTag.Length < TunnelCipher.TagBytes)
             throw new CryptographicException("Session ciphertext is too short.");
@@ -105,7 +111,7 @@ internal sealed class SessionKey : IDialSecrets, IDisposable
         {
             ObjectDisposedException.ThrowIf(_key is null, this);
             using var aes = new AesGcm(_key, TunnelCipher.TagBytes);
-            aes.Decrypt(nonce, cipher, tag, plain, TunnelCipher.AssociatedData);
+            aes.Decrypt(nonce, cipher, tag, plain, associatedData);
         }
 
         return plain;
@@ -138,6 +144,7 @@ internal static class TunnelCipher
     public const int Version = 1;
 
     internal static readonly byte[] AssociatedData = Encoding.UTF8.GetBytes("tunnelman-session/1");
+    internal static readonly byte[] ExportAssociatedData = Encoding.UTF8.GetBytes("tunnelman-export/1");
 
     public static bool IterationsInRange(int iterations) =>
         iterations is >= MinIterations and <= MaxIterations;

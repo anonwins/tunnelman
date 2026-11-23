@@ -41,4 +41,36 @@ public sealed class TunnelRecordTests
         Assert.True(record.HasProxy);
         Assert.True(record.TryValidateEndpoints(out _));
     }
+
+    [Fact]
+    public void Empty_socks_is_valid_and_not_a_proxy()
+    {
+        var record = new TunnelRecord
+        {
+            ListenAddress = "127.0.0.1",
+            ListenPort = 22001,
+            RemoteHost = "example.test",
+            RemotePort = 22,
+        };
+        Assert.False(record.HasProxy);
+        Assert.True(record.TryValidateEndpoints(out _));
+    }
+
+    [Theory]
+    [InlineData("127.0.0.1", 0)]
+    [InlineData("", 25560)]
+    public void Half_filled_socks_is_rejected(string host, int port)
+    {
+        var record = new TunnelRecord
+        {
+            ListenAddress = "127.0.0.1",
+            ListenPort = 22001,
+            SocksHost = host,
+            SocksPort = port,
+            RemoteHost = "example.test",
+            RemotePort = 22,
+        };
+        Assert.False(record.TryValidateEndpoints(out var error));
+        Assert.Equal(TunnelRecord.SocksPairRequired, error);
+    }
 }

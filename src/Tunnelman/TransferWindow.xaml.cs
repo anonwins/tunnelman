@@ -13,6 +13,7 @@ public partial class TransferWindow : Window
     private readonly List<TransferRow> _rows;
     private readonly IReadOnlyList<TunnelRecord> _existing;
     private readonly Func<IReadOnlyList<TunnelRecord>, string?>? _import;
+    private readonly Func<string, IReadOnlyList<TunnelRecord>, string?>? _write;
     private bool _syncingAll;
     private bool _committing;
     private bool _focused;
@@ -30,12 +31,14 @@ public partial class TransferWindow : Window
         IReadOnlyList<TransferEntry> entries,
         IReadOnlyList<TunnelRecord> existing,
         string? sourcePath,
-        Func<IReadOnlyList<TunnelRecord>, string?>? import)
+        Func<IReadOnlyList<TunnelRecord>, string?>? import,
+        Func<string, IReadOnlyList<TunnelRecord>, string?>? write = null)
         : this()
     {
         _export = export;
         _existing = existing;
         _import = import;
+        _write = write;
         _rows = entries.Select(e => new TransferRow(e)).ToList();
         foreach (var row in _rows)
             row.PropertyChanged += OnRowPropertyChanged;
@@ -43,7 +46,7 @@ public partial class TransferWindow : Window
         Title = export ? "Export tunnels" : "Import tunnels";
         HeadingText.Text = Title;
         BodyText.Text = export
-            ? "Choose what to write into one file."
+            ? "Choose what to write into one file. The file is encrypted with this session's passphrase."
             : "Choose what to add. New tunnels stay off until you enable them.";
         PrimaryGlyph.Text = export ? "\uEDE1" : "\uE8B5";
         if (!export && !string.IsNullOrWhiteSpace(sourcePath))
@@ -286,10 +289,19 @@ public partial class TransferWindow : Window
                 return false;
         }
 
+        if (_write is null)
+        {
+            MessageBox.Show(this, TunnelTransfer.CouldNotWrite, "Tunnelman", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
+        }
+
         try
         {
-            TunnelTransfer.Write(path, selected);
-            return true;
+            var error = _write(path, selected);
+            if (error is null)
+                return true;
+            MessageBox.Show(this, error, "Tunnelman", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

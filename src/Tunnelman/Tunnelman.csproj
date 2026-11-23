@@ -13,10 +13,37 @@
     <AssemblyTitle>Tunnelman</AssemblyTitle>
     <RootNamespace>Tunnelman</RootNamespace>
     <AssemblyName>Tunnelman</AssemblyName>
-    <Version>0.1.0</Version>
-    <InformationalVersion>0.1.0</InformationalVersion>
+    <VersionPrefix>0.1.0</VersionPrefix>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <FileVersion>0.1.0.0</FileVersion>
+    <InformationalVersion Condition="'$(Configuration)' == 'Debug'">0.1.0-debug</InformationalVersion>
+    <InformationalVersion Condition="'$(Configuration)' != 'Debug'">0.1.0</InformationalVersion>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Remove="BuildNumber.txt" />
+    <UpToDateCheckInput Remove="BuildNumber.txt" />
+  </ItemGroup>
+
+  <Target Name="BumpBuildNumber"
+          BeforeTargets="GetAssemblyAttributes"
+          Condition="'$(Configuration)' == 'Release' and '$(DesignTimeBuild)' != 'true' and '$(BumpBuildNumber)' != 'false' and !$(MSBuildProjectName.Contains('_wpftmp'))">
+    <PropertyGroup>
+      <_BuildNumberFile>$(MSBuildProjectDirectory)\BuildNumber.txt</_BuildNumberFile>
+      <_CurrentBuildNumber>$([System.IO.File]::ReadAllText($(_BuildNumberFile)).Trim())</_CurrentBuildNumber>
+    </PropertyGroup>
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch($(_CurrentBuildNumber), '^[0-9]+$'))"
+           Text="BuildNumber.txt must contain an integer." />
+    <PropertyGroup>
+      <_NextBuildNumber>$([MSBuild]::Add($(_CurrentBuildNumber), 1))</_NextBuildNumber>
+      <Version>$(VersionPrefix).$(_NextBuildNumber)</Version>
+      <AssemblyVersion>$(Version)</AssemblyVersion>
+      <FileVersion>$(Version)</FileVersion>
+      <InformationalVersion>$(Version)</InformationalVersion>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(_BuildNumberFile)" Lines="$(_NextBuildNumber)" Overwrite="true" Encoding="ASCII" />
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="System.IO.FileSystem.AccessControl" Version="5.0.0" />
