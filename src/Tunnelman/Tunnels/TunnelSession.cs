@@ -1,32 +1,43 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
-using System.Text.Json.Nodes;
 using System.Windows.Threading;
 
 namespace Tunnelman.Tunnels;
 
+internal enum SessionView
+{
+    Create,
+    Unlock,
+    Open,
+    Locked,
+}
+
 internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
 {
     public const string CouldNotSave = "Could not save the session.";
-    public const string BakWarning = "Previous session file was unreadable and was copied to tunnels.json.bak.";
+    public const string PassphraseTooShort = "Use at least 8 characters.";
+    public const string PassphraseMismatch = "Passphrases do not match.";
+    public const string WrongPassphrase = "Wrong passphrase.";
 
     private readonly TunnelStore _store;
     private readonly Dispatcher _dispatcher;
-    private readonly Func<ITunnelKind, ITunnelRuntime>? _createRuntime;
+    private readonly Func<ITunnelRuntime>? _createRuntime;
+    private readonly Dictionary<Guid, HopSlot> _slots = [];
+    private SessionKey? _key;
+    private SessionView _mode = SessionView.Unlock;
     private bool _disposed;
-    private bool _persistBlocked;
-    private string _statusText = "Starting…";
-    private string? _ncatPath;
-    private bool _isNcatMissing = true;
-    private string? _loadWarning;
+    private bool _exitPrompt;
+    private bool _freshUnlock;
+    private int _lockedSaved;
+    private string _statusText = "Enter the passphrase to continue.";
     private string? _saveError;
     private string? _notice;
 
     public TunnelSession(
         TunnelStore? store = null,
         Dispatcher? dispatcher = null,
-        Func<ITunnelKind, ITunnelRuntime>? createRuntime = null)
+        Func<ITunnelRuntime>? createRuntime = null)
     {
         _store = store ?? new TunnelStore();
         _dispatcher = dispatcher ?? Dispatcher.CurrentDispatcher;
@@ -38,6 +49,36 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
     public ObservableCollection<TunnelItem> Tunnels { get; } = [];
 
     public string WindowTitle => "Tunnelman";
+
+    public SessionView Mode => _mode;
+
+    public bool ShowSession => _mode == SessionView.Open;
+
+    public bool ShowGate => _mode != SessionView.Open;
+
+    public bool ShowConfirm => _mode == SessionView.Create;
+
+    public bool IsLocked => _mode == SessionView.Locked;
+
+    public bool CanLock => ShowSession && !AnyBusy && !_exitPrompt;
+
+    public string LockToolTip => CanLock
+        ? "Hide the tunnel list until the passphrase is entered."
+        : "Wait until tunnels finish starting or stopping.";
+
+    public string GateTitle => _mode switch
+    {
+        SessionView.Create => "Protect this session",
+        SessionView.Locked => "Session locked",
+        _ => "Unlock Tunnelman",
+    };
+
+    public string GateBody => _mode switch
+    {
+        SessionView.Create => "This passphrase encrypts the saved tunnels. Tunnelman asks for it at startup and after a lock.",
+        SessionView.Locked => LockedBody(),
+        _ => "Enter the passphrase to show the saved tunnels. Enabled tunnels start after they appear.",
+    };
 
     public string StatusText
     {
@@ -51,135 +92,161 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
         }
     }
 
-    public string? NcatPath
-    {
-        get => _ncatPath;
-        private set
-        {
-            if (_ncatPath == value)
-                return;
-            _ncatPath = value;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(NcatPathText));
-        }
-    }
+    public bool HasTunnels => ShowSession && Tunnels.Count > 0;
 
-    public string NcatPathText =>
-        string.IsNullOrWhiteSpace(NcatPath) ? "ncat not found" : NcatPath;
+    public bool ShowNoTunnelsHint => ShowSession && Tunnels.Count == 0;
 
-    public bool IsNcatMissing
-    {
-        get => _isNcatMissing;
-        private set
-        {
-            if (_isNcatMissing == value)
-                return;
-            _isNcatMissing = value;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(ShowNoTunnelsHint));
-            OnPropertyChanged(nameof(ShowNcatSetupHint));
-            OnPropertyChanged(nameof(ToolsStatusText));
-        }
-    }
-
-    public string ToolsStatusText => IsNcatMissing ? "Status: Setup needed" : "Status: OK";
-
-    public bool HasTunnels => Tunnels.Count > 0;
-
-    public bool ShowNoTunnelsHint => !HasTunnels && !IsNcatMissing;
-
-    public bool ShowNcatSetupHint => IsNcatMissing && !HasTunnels;
-
-    public int RunningCount => Tunnels.Count(t => t.Status == TunnelStatus.Running);
+    public int RunningCount => _mode == SessionView.Locked
+        ? _slots.Values.Count(slot => slot.Runtime?.IsRunning == true)
+        : Tunnels.Count(item => item.Status == TunnelStatus.Running);
 
     public string RunningCountText =>
         RunningCount == 1 ? "1 running" : $"{RunningCount} running";
 
-    public void Load()
+    public bool AnyBusy => Tunnels.Any(item => item.IsBusy);
+
+    public void PrepareCreate() => SetMode(SessionView.Create);
+
+    public void PrepareUnlock() => SetMode(SessionView.Unlock);
+
+    public void SetExitPrompt(bool open)
+    {
+        if (_exitPrompt == open)
+            return;
+        _exitPrompt = open;
+        OnPropertyChanged(nameof(CanLock));
+    }
+
+    public static bool TryValidateNewPassphrase(string passphrase, string confirm, out string error)
+    {
+        if (passphrase.Length < 8)
+        {
+            error = PassphraseTooShort;
+            return false;
+        }
+
+        if (!string.Equals(passphrase, confirm, StringComparison.Ordinal))
+        {
+            error = PassphraseMismatch;
+            return false;
+        }
+
+        error = "";
+        return true;
+    }
+
+    public SessionKey? CreateFile(string passphrase, int iterations)
     {
         try
         {
-            TunnelStoreLoadResult loaded;
-            try
-            {
-                loaded = _store.Load();
-            }
-            catch (Exception)
-            {
-                loaded = TunnelStoreLoadResult.FailUnreadable(TunnelStore.CouldNotRead);
-            }
-
-            Tunnels.Clear();
-            foreach (var record in loaded.Tunnels)
-                Tunnels.Add(CreateItem(record));
-
-            if (loaded.Unreadable)
-                _persistBlocked = true;
-            else if (loaded.Error is null)
-                _persistBlocked = false;
-
-            _saveError = null;
-            _notice = null;
-            if (loaded.Corrupt && loaded.BakCopied)
-                _loadWarning = BakWarning;
-            else
-                _loadWarning = loaded.Error;
-
-            NotifyListFlags();
-            RefreshSummary();
+            return _store.Create(passphrase, iterations, []);
         }
-        catch (Exception)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            Tunnels.Clear();
-            _persistBlocked = true;
-            _saveError = null;
-            _notice = null;
-            _loadWarning = TunnelStore.CouldNotRead;
-            NotifyListFlags();
-            RefreshSummary();
+            return null;
         }
     }
 
-    internal void SetNcatForTests(string? path, bool missing)
+    public void ApplyCreated(SessionKey key)
     {
-        NcatPath = path;
-        IsNcatMissing = missing;
+        _key?.Dispose();
+        _key = key;
+        _freshUnlock = false;
+        _saveError = null;
+        _notice = null;
+        ReplaceItems([]);
+        SetMode(SessionView.Open);
     }
 
-    public void ResolveNcat()
+    public TunnelOpenResult OpenFile(string passphrase) => _store.Open(passphrase);
+
+    public bool TryUnlock(string passphrase, out string error)
     {
-        var result = NcatResolver.Resolve();
-        NcatPath = result.Path;
-        IsNcatMissing = !result.Found;
+        var opened = OpenFile(passphrase);
+        if (opened.Status == TunnelOpenStatus.WrongPassphrase)
+        {
+            error = WrongPassphrase;
+            return false;
+        }
+
+        if (opened.Status != TunnelOpenStatus.Ok || opened.Key is null)
+        {
+            opened.Key?.Dispose();
+            error = TunnelStore.CouldNotRead;
+            return false;
+        }
+
+        ApplyOpened(opened);
+        error = "";
+        return true;
+    }
+
+    public void ApplyOpened(TunnelOpenResult opened)
+    {
+        if (opened.Key is null)
+            return;
+        var fresh = _mode is SessionView.Unlock or SessionView.Create;
+        if (_key is null)
+            _key = opened.Key;
+        else
+            opened.Key.Dispose();
+        _freshUnlock = fresh;
+        _saveError = null;
+        ReplaceItems(opened.Tunnels);
+        SetMode(SessionView.Open);
+    }
+
+    public bool ConsumeFreshUnlock()
+    {
+        var fresh = _freshUnlock;
+        _freshUnlock = false;
+        return fresh;
+    }
+
+    public void SetTransientStatus(string text) => StatusText = text;
+
+    public void RestoreStatus() => RefreshSummary();
+
+    public bool TryLock()
+    {
+        if (!CanLock)
+            return false;
+        _lockedSaved = Tunnels.Count;
+        var items = Tunnels.ToList();
+        SetMode(SessionView.Locked);
+        foreach (var item in items)
+        {
+            item.ClearLog();
+            item.SetRuntime(null);
+        }
+
+        Tunnels.Clear();
         RefreshSummary();
+        return true;
     }
 
     public async Task StartEnabledAsync()
     {
-        if (_disposed)
+        if (_disposed || _mode != SessionView.Open)
             return;
 
-        var tasks = Tunnels.Where(t => t.Enabled && !t.IsBusy).Select(StartItemAsync);
+        var tasks = Tunnels.Where(item => item.Enabled && !item.IsBusy).Select(StartItemAsync);
         await Task.WhenAll(tasks).ConfigureAwait(true);
         if (_disposed)
             return;
         RefreshSummary();
     }
 
-    public bool TryAdd(string name, string kind, JsonObject options, out string error)
+    public bool TryAdd(TunnelRecord draft, out string error)
     {
         error = "";
-        if (_disposed)
+        if (_disposed || _mode != SessionView.Open)
             return false;
 
-        var record = new TunnelRecord
-        {
-            Id = Guid.NewGuid(),
-            Name = name.Trim(),
-            Kind = TunnelKindRegistry.Canonicalize(kind),
-            Enabled = false,
-            Options = options,
-        };
+        var record = draft.Clone();
+        record.Id = Guid.NewGuid();
+        record.Name = draft.Name.Trim();
+        record.Enabled = false;
         if (!TryValidate(record, ignoreId: null, out error))
             return false;
 
@@ -199,31 +266,26 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
         return true;
     }
 
-    public bool TryUpdate(TunnelItem item, string name, string kind, JsonObject options, out string error)
+    public bool TryUpdate(TunnelItem item, TunnelRecord draft, out string error)
     {
         error = "";
-        if (_disposed)
+        if (_disposed || _mode != SessionView.Open)
             return false;
 
         var next = item.Record.Clone();
-        next.Name = name.Trim();
-        next.Kind = TunnelKindRegistry.Canonicalize(kind);
-        next.Options = options;
+        CopyEndpoints(draft, next);
+        next.Name = draft.Name.Trim();
         if (!TryValidate(next, ignoreId: item.Id, out error))
             return false;
 
-        var previousName = item.Record.Name;
-        var previousKind = item.Record.Kind;
-        var previousOptions = item.Record.Options is null ? null : (JsonObject)item.Record.Options.DeepClone();
+        var previous = item.Record.Clone();
+        CopyEndpoints(next, item.Record);
         item.Record.Name = next.Name;
-        item.Record.Kind = next.Kind;
-        item.Record.Options = next.Options;
         item.RefreshIdentity();
         if (!Persist())
         {
-            item.Record.Name = previousName;
-            item.Record.Kind = previousKind;
-            item.Record.Options = previousOptions;
+            CopyEndpoints(previous, item.Record);
+            item.Record.Name = previous.Name;
             item.RefreshIdentity();
             error = CouldNotSave;
             RefreshSummary();
@@ -234,11 +296,11 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
         return true;
     }
 
-    public async Task ApplyEditAsync(TunnelItem item, string name, string kind, JsonObject options)
+    public async Task ApplyEditAsync(TunnelItem item, TunnelRecord draft)
     {
-        if (_disposed || item.IsBusy)
+        if (_disposed || _mode != SessionView.Open || item.IsBusy)
             return;
-        if (!TryUpdate(item, name, kind, options, out var error))
+        if (!TryUpdate(item, draft, out var error))
             throw new InvalidOperationException(error);
         if (_disposed || !item.Enabled)
             return;
@@ -253,18 +315,19 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
 
     public async Task DeleteAsync(TunnelItem item)
     {
-        if (_disposed || item.IsBusy)
+        if (_disposed || _mode != SessionView.Open || item.IsBusy)
             return;
 
         await StopItemAsync(item).ConfigureAwait(true);
         if (_disposed)
             return;
-        if (!PersistRecords(Tunnels.Where(t => t != item).Select(t => t.Record)))
+        if (!PersistRecords(Tunnels.Where(other => other != item).Select(other => other.Record)))
         {
             RefreshSummary();
             return;
         }
 
+        _slots.Remove(item.Id);
         Tunnels.Remove(item);
         NotifyListFlags();
         RefreshSummary();
@@ -272,9 +335,7 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
 
     public async Task SetEnabledAsync(TunnelItem item, bool enabled)
     {
-        if (_disposed || item.IsBusy)
-            return;
-        if (enabled && !item.IsSupported)
+        if (_disposed || _mode != SessionView.Open || item.IsBusy)
             return;
         if (item.Enabled == enabled)
             return;
@@ -284,12 +345,6 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
         if (!Persist())
         {
             item.Enabled = previous;
-            RefreshSummary();
-            return;
-        }
-
-        if (!item.IsSupported)
-        {
             RefreshSummary();
             return;
         }
@@ -307,7 +362,9 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
     {
         if (_disposed)
             return;
-        await Task.WhenAll(Tunnels.Select(StopItemAsync)).ConfigureAwait(true);
+        var pending = _slots.Values.Where(slot => slot.Runtime is not null).Select(StopSlotAsync).ToArray();
+        if (pending.Length > 0)
+            await Task.WhenAll(pending).ConfigureAwait(true);
         if (_disposed)
             return;
         RefreshSummary();
@@ -315,7 +372,7 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
 
     public async Task<bool> ClearSessionAsync()
     {
-        if (_disposed)
+        if (_disposed || _mode == SessionView.Locked)
             return false;
 
         await StopAllAsync().ConfigureAwait(true);
@@ -327,8 +384,8 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
             return false;
         }
 
+        _slots.Clear();
         Tunnels.Clear();
-        _loadWarning = null;
         _saveError = null;
         _notice = null;
         NotifyListFlags();
@@ -338,6 +395,8 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
 
     public IReadOnlyList<TunnelRecord> SnapshotRecords()
     {
+        if (_mode != SessionView.Open)
+            return [];
         var copies = new List<TunnelRecord>(Tunnels.Count);
         foreach (var item in Tunnels)
         {
@@ -353,7 +412,7 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
     {
         added = 0;
         error = "";
-        if (_disposed)
+        if (_disposed || _mode != SessionView.Open)
             return false;
         if (records.Count == 0)
             return true;
@@ -364,7 +423,7 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
             var record = incoming.Clone();
             record.Id = Guid.NewGuid();
             record.Enabled = false;
-            record.Kind = TunnelKindRegistry.Canonicalize(record.Kind);
+            record.Name = incoming.Name.Trim();
             items.Add(CreateItem(record));
         }
 
@@ -398,91 +457,32 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
         if (_disposed)
             return;
         _disposed = true;
+        foreach (var slot in _slots.Values)
+        {
+            slot.Runtime?.Dispose();
+            slot.Runtime = null;
+        }
+
         foreach (var item in Tunnels)
-        {
-            var runtime = item.Runtime;
-            if (runtime is null)
-                continue;
-            runtime.Dispose();
             item.SetRuntime(null);
-        }
-    }
-
-    private bool Persist() => PersistRecords(Tunnels.Select(t => t.Record));
-
-    private bool PersistRecords(IEnumerable<TunnelRecord> records)
-    {
-        if (_persistBlocked)
-        {
-            _saveError = CouldNotSave;
-            return false;
-        }
-
-        try
-        {
-            _store.Save(records);
-            _saveError = null;
-            if (!_persistBlocked)
-                _loadWarning = null;
-            _notice = null;
-            return true;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            _saveError = CouldNotSave;
-            return false;
-        }
-    }
-
-    private TunnelItem CreateItem(TunnelRecord record)
-    {
-        record.Kind = TunnelKindRegistry.Canonicalize(record.Kind);
-        var item = new TunnelItem(record);
-        if (!item.IsSupported)
-            item.Mark(TunnelStatus.Unsupported);
-        return item;
+        _key?.Dispose();
+        _key = null;
     }
 
     private async Task StartItemAsync(TunnelItem item)
     {
-        if (_disposed || !item.Enabled)
+        if (_disposed || !item.Enabled || _key is null)
             return;
-        if (!item.IsSupported)
-        {
-            item.Mark(TunnelStatus.Unsupported);
-            item.AppendLog("This tunnel type is not supported yet.");
-            RefreshSummary();
-            return;
-        }
-
-        if (IsNcatMissing || string.IsNullOrWhiteSpace(NcatPath))
-        {
-            item.Mark(TunnelStatus.Failed);
-            item.AppendLog("Nmap ncat was not found.");
-            RefreshSummary();
-            return;
-        }
-
-        if (item.Runtime?.IsRunning == true)
+        if (_slots.TryGetValue(item.Id, out var existing) && existing.Runtime?.IsRunning == true)
             return;
         if (!item.TryBeginBusy(TunnelStatus.Starting))
             return;
 
-        var previous = item.Runtime;
-        if (previous is not null)
+        if (existing?.Runtime is { } previous)
         {
             previous.Dispose();
-            if (item.Runtime == previous)
-                item.SetRuntime(null);
-        }
-
-        var kind = TunnelKindRegistry.Find(item.Kind);
-        if (kind is null)
-        {
-            item.SetBusy(false);
-            item.Mark(TunnelStatus.Unsupported);
-            RefreshSummary();
-            return;
+            if (existing.Runtime == previous)
+                existing.Runtime = null;
         }
 
         if (_disposed)
@@ -491,17 +491,24 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
             return;
         }
 
-        var runtime = _createRuntime?.Invoke(kind) ?? kind.CreateRuntime();
-        void OnExit(int code) => OnRuntimeExited(item, runtime, code);
+        var slot = existing ?? new HopSlot(item.Id);
+        _slots[item.Id] = slot;
+        var runtime = _createRuntime?.Invoke() ?? new SocksHopRuntime();
+        void OnExit(int code) => OnRuntimeExited(item.Id, runtime, code);
         runtime.Exited += OnExit;
+        slot.Runtime = runtime;
+        slot.Stopping = false;
+        slot.Status = TunnelStatus.Starting;
         item.SetRuntime(runtime);
         try
         {
-            await runtime.StartAsync(item.Record, NcatPath!, line => PostLog(item, line), CancellationToken.None).ConfigureAwait(true);
-            if (_disposed || item.Runtime != runtime)
+            await runtime.StartAsync(item.Record, _key, line => PostLog(item, line), CancellationToken.None).ConfigureAwait(true);
+            if (_disposed || slot.Runtime != runtime)
             {
                 runtime.Exited -= OnExit;
                 runtime.Dispose();
+                if (slot.Runtime == runtime)
+                    slot.Runtime = null;
                 if (item.Runtime == runtime)
                     item.SetRuntime(null);
                 item.SetBusy(false);
@@ -509,9 +516,12 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
             }
 
             if (runtime.IsRunning)
+            {
+                slot.Status = TunnelStatus.Running;
                 item.SetBusy(false, TunnelStatus.Running);
+            }
             else
-                Fail(item, runtime, "ncat is not running.");
+                Fail(item, slot, runtime, "The tunnel is not running.");
         }
         catch (Exception ex)
         {
@@ -519,52 +529,70 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
             {
                 runtime.Exited -= OnExit;
                 runtime.Dispose();
+                if (slot.Runtime == runtime)
+                    slot.Runtime = null;
                 if (item.Runtime == runtime)
                     item.SetRuntime(null);
                 item.SetBusy(false);
                 return;
             }
 
-            Fail(item, runtime, ex.Message);
+            Fail(item, slot, runtime, ex.Message);
         }
 
         if (!_disposed)
             RefreshSummary();
+        OnPropertyChanged(nameof(CanLock));
     }
 
     private async Task StopItemAsync(TunnelItem item)
     {
+        if (_slots.TryGetValue(item.Id, out var slot))
+            await StopSlotAsync(slot).ConfigureAwait(true);
+        else
+            MarkIdle(item, unexpected: false);
+    }
+
+    private async Task StopSlotAsync(HopSlot slot)
+    {
         if (_disposed)
             return;
-
-        var runtime = item.Runtime;
+        var item = FindItem(slot.Id);
+        var runtime = slot.Runtime;
         if (runtime is null)
         {
-            MarkIdle(item, unexpected: false);
+            if (item is not null)
+                MarkIdle(item, unexpected: false);
+            _slots.Remove(slot.Id);
             return;
         }
 
-        if (!item.TryBeginBusy(TunnelStatus.Stopping) && item.Status is not TunnelStatus.Stopping)
+        if (item is not null && !item.TryBeginBusy(TunnelStatus.Stopping) && item.Status is not TunnelStatus.Stopping)
             return;
 
+        slot.Stopping = true;
+        slot.Status = TunnelStatus.Stopping;
         try
         {
             await runtime.StopAsync().ConfigureAwait(true);
         }
         catch (Exception ex)
         {
-            if (!_disposed)
+            if (!_disposed && item is not null)
                 item.AppendLog(ex.Message);
         }
         finally
         {
-            if (item.Runtime == runtime)
+            if (slot.Runtime == runtime)
             {
                 runtime.Dispose();
-                item.SetRuntime(null);
+                slot.Runtime = null;
             }
 
-            if (!_disposed)
+            if (item?.Runtime == runtime)
+                item.SetRuntime(null);
+            _slots.Remove(slot.Id);
+            if (!_disposed && item is not null)
             {
                 item.SetBusy(false);
                 MarkIdle(item, unexpected: false);
@@ -574,31 +602,42 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
 
     private void PostLog(TunnelItem item, string line)
     {
-        if (_disposed)
+        if (_disposed || _mode == SessionView.Locked)
             return;
         if (_dispatcher.CheckAccess())
-            item.AppendLog(line);
+        {
+            if (Tunnels.Contains(item))
+                item.AppendLog(line);
+        }
         else
+        {
             _dispatcher.BeginInvoke(() =>
             {
-                if (!_disposed)
+                if (!_disposed && _mode != SessionView.Locked && Tunnels.Contains(item))
                     item.AppendLog(line);
             });
+        }
     }
 
-    private void OnRuntimeExited(TunnelItem item, ITunnelRuntime runtime, int code)
+    private void OnRuntimeExited(Guid id, ITunnelRuntime runtime, int code)
     {
         void Apply()
         {
-            if (_disposed || item.Runtime != runtime)
+            if (_disposed || !_slots.TryGetValue(id, out var slot) || slot.Runtime != runtime || slot.Stopping)
                 return;
-            if (item.Status is TunnelStatus.Stopping)
-                return;
-            item.AppendLog($"Process ended ({code}).");
+            var item = FindItem(id);
+            if (item is not null && _mode != SessionView.Locked)
+                item.AppendLog($"Process ended ({code}).");
             runtime.Dispose();
-            if (item.Runtime == runtime)
+            if (slot.Runtime == runtime)
+                slot.Runtime = null;
+            slot.Status = TunnelStatus.Failed;
+            if (item is not null && item.Runtime == runtime)
+            {
                 item.SetRuntime(null);
-            MarkIdle(item, unexpected: true);
+                item.Mark(TunnelStatus.Failed);
+            }
+
             _notice = null;
             RefreshSummary();
         }
@@ -609,30 +648,28 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
             _dispatcher.BeginInvoke(Apply);
     }
 
-    private void Fail(TunnelItem item, ITunnelRuntime runtime, string message)
+    private void Fail(TunnelItem item, HopSlot slot, ITunnelRuntime runtime, string message)
     {
         if (_disposed)
             return;
-        item.AppendLog(message);
+        if (_mode != SessionView.Locked)
+            item.AppendLog(message);
         runtime.Dispose();
+        if (slot.Runtime == runtime)
+            slot.Runtime = null;
+        slot.Status = TunnelStatus.Failed;
         if (item.Runtime == runtime)
             item.SetRuntime(null);
         item.Mark(TunnelStatus.Failed);
         _notice = null;
+        OnPropertyChanged(nameof(CanLock));
+        OnPropertyChanged(nameof(LockToolTip));
     }
 
-    private static void MarkIdle(TunnelItem item, bool unexpected)
-    {
-        if (!item.IsSupported)
-        {
-            item.Mark(TunnelStatus.Unsupported);
-            return;
-        }
-
+    private static void MarkIdle(TunnelItem item, bool unexpected) =>
         item.Mark(unexpected ? TunnelStatus.Failed : TunnelStatus.Stopped);
-    }
 
-    internal bool TryValidate(TunnelRecord record, Guid? ignoreId, out string error)
+    private bool TryValidate(TunnelRecord record, Guid? ignoreId, out string error)
     {
         if (string.IsNullOrWhiteSpace(record.Name))
         {
@@ -640,64 +677,154 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
             return false;
         }
 
-        if (Tunnels.Any(t => t.Id != ignoreId && t.Name.Equals(record.Name.Trim(), StringComparison.OrdinalIgnoreCase)))
+        if (Tunnels.Any(item => item.Id != ignoreId && item.Name.Equals(record.Name.Trim(), StringComparison.OrdinalIgnoreCase)))
         {
             error = "A tunnel with this name already exists.";
             return false;
         }
 
-        record.Kind = TunnelKindRegistry.Canonicalize(record.Kind);
-        var kind = TunnelKindRegistry.Find(record.Kind);
-        if (kind is null)
-        {
-            error = "Unknown tunnel type.";
-            return false;
-        }
-
-        if (record.Options is null)
-        {
-            error = "Tunnel options are invalid.";
-            return false;
-        }
-
-        if (!kind.TryValidate(record.Options, out error))
+        if (!record.TryValidateEndpoints(out error))
             return false;
 
-        if (TunnelKindRegistry.Is(record.Kind, TunnelKinds.NcatSocks)
-            && NcatSocksOptions.TryParse(record.Options, out var options, out _))
+        var occupied = Tunnels
+            .Where(item => item.Id != ignoreId)
+            .Select(item => (item.Record.ListenAddress, item.Record.ListenPort))
+            .ToList();
+        if (ListenOccupancy.ConflictsWithAny(record.ListenAddress, record.ListenPort, occupied))
         {
-            var occupied = new List<(string Host, int Port)>();
-            foreach (var other in Tunnels)
-            {
-                if (other.Id == ignoreId || !TunnelKindRegistry.Is(other.Kind, TunnelKinds.NcatSocks))
-                    continue;
-                if (!NcatSocksOptions.TryParse(other.Record.Options, out var existing, out _))
-                    continue;
-                occupied.Add((existing.ListenAddress, existing.ListenPort));
-            }
-
-            if (ListenOccupancy.ConflictsWithAny(options.ListenAddress, options.ListenPort, occupied))
-            {
-                error = "Another tunnel already uses this listen address and port.";
-                return false;
-            }
+            error = "Another tunnel already uses this listen address and port.";
+            return false;
         }
 
         error = "";
         return true;
     }
 
+    private bool Persist() => PersistRecords(Tunnels.Select(item => item.Record));
+
+    private bool PersistRecords(IEnumerable<TunnelRecord> records)
+    {
+        if (_mode == SessionView.Locked || _key is null)
+        {
+            _saveError = CouldNotSave;
+            return false;
+        }
+
+        try
+        {
+            _store.Save(records, _key);
+            _saveError = null;
+            _notice = null;
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            _saveError = CouldNotSave;
+            return false;
+        }
+    }
+
+    private void ReplaceItems(IReadOnlyList<TunnelRecord> records)
+    {
+        Tunnels.Clear();
+        foreach (var record in records)
+        {
+            var item = CreateItem(record.Clone());
+            if (_slots.TryGetValue(item.Id, out var slot))
+            {
+                item.SetRuntime(slot.Runtime);
+                if (slot.Runtime?.IsRunning == true)
+                    item.Mark(TunnelStatus.Running);
+                else if (slot.Status == TunnelStatus.Failed)
+                    item.Mark(TunnelStatus.Failed);
+            }
+
+            Tunnels.Add(item);
+        }
+
+        NotifyListFlags();
+        RefreshSummary();
+    }
+
+    private TunnelItem CreateItem(TunnelRecord record)
+    {
+        var item = new TunnelItem(record);
+        item.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName is nameof(TunnelItem.IsBusy) or nameof(TunnelItem.Status))
+                OnPropertyChanged(nameof(CanLock));
+            OnPropertyChanged(nameof(LockToolTip));
+        };
+        return item;
+    }
+
+    private TunnelItem? FindItem(Guid id)
+    {
+        foreach (var item in Tunnels)
+        {
+            if (item.Id == id)
+                return item;
+        }
+
+        return null;
+    }
+
+    private void SetMode(SessionView mode)
+    {
+        _mode = mode;
+        NotifyGate();
+        RefreshSummary();
+    }
+
+    private string LockedBody()
+    {
+        var running = RunningCount;
+        if (running == 0)
+            return "Nothing is listening. Unlock to see the saved tunnels.";
+        if (running == 1 && _lockedSaved == 1)
+            return "1 tunnel is still running. Its host stays hidden until you unlock.";
+        if (running == 1)
+            return $"1 of {_lockedSaved} tunnels is still running. Its host stays hidden until you unlock.";
+        return $"{running} of {_lockedSaved} tunnels are still running. Their hosts stay hidden until you unlock.";
+    }
+
+    private string LockedStatus() =>
+        RunningCount == 0
+            ? "Locked · nothing running"
+            : $"Locked · {RunningCount} of {_lockedSaved} running";
+
     private void RefreshSummary()
     {
         OnPropertyChanged(nameof(RunningCount));
         OnPropertyChanged(nameof(RunningCountText));
+        OnPropertyChanged(nameof(GateBody));
+        OnPropertyChanged(nameof(CanLock));
+        OnPropertyChanged(nameof(LockToolTip));
+        if (_mode == SessionView.Locked)
+        {
+            StatusText = LockedStatus();
+            return;
+        }
+
+        if (_mode == SessionView.Create)
+        {
+            StatusText = "Set a passphrase to continue.";
+            return;
+        }
+
+        if (_mode == SessionView.Unlock)
+        {
+            StatusText = "Enter the passphrase to continue.";
+            return;
+        }
+
         if (!string.IsNullOrWhiteSpace(_saveError))
         {
             StatusText = _saveError;
             return;
         }
 
-        var live = Tunnels.Any(t => t.Status is TunnelStatus.Running or TunnelStatus.Failed);
+        var live = Tunnels.Any(item => item.Status is TunnelStatus.Running or TunnelStatus.Failed);
         if (live)
         {
             StatusText = $"{RunningCount} of {Tunnels.Count} running";
@@ -710,18 +837,6 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
             return;
         }
 
-        if (!string.IsNullOrWhiteSpace(_loadWarning))
-        {
-            StatusText = _loadWarning;
-            return;
-        }
-
-        if (IsNcatMissing)
-        {
-            StatusText = "Nmap ncat was not found.";
-            return;
-        }
-
         StatusText = $"{RunningCount} of {Tunnels.Count} running";
     }
 
@@ -729,9 +844,40 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
     {
         OnPropertyChanged(nameof(HasTunnels));
         OnPropertyChanged(nameof(ShowNoTunnelsHint));
-        OnPropertyChanged(nameof(ShowNcatSetupHint));
+    }
+
+    private void NotifyGate()
+    {
+        OnPropertyChanged(nameof(Mode));
+        OnPropertyChanged(nameof(ShowSession));
+        OnPropertyChanged(nameof(ShowGate));
+        OnPropertyChanged(nameof(ShowConfirm));
+        OnPropertyChanged(nameof(IsLocked));
+        OnPropertyChanged(nameof(CanLock));
+        OnPropertyChanged(nameof(LockToolTip));
+        OnPropertyChanged(nameof(GateTitle));
+        OnPropertyChanged(nameof(GateBody));
+        NotifyListFlags();
+    }
+
+    private static void CopyEndpoints(TunnelRecord from, TunnelRecord to)
+    {
+        to.ListenAddress = from.ListenAddress;
+        to.ListenPort = from.ListenPort;
+        to.SocksHost = from.SocksHost;
+        to.SocksPort = from.SocksPort;
+        to.RemoteHost = from.RemoteHost;
+        to.RemotePort = from.RemotePort;
     }
 
     private void OnPropertyChanged([CallerMemberName] string? name = null) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+
+    private sealed class HopSlot(Guid id)
+    {
+        public Guid Id { get; } = id;
+        public ITunnelRuntime? Runtime { get; set; }
+        public TunnelStatus Status { get; set; }
+        public bool Stopping { get; set; }
+    }
 }

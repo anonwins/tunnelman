@@ -16,8 +16,8 @@
     <DockPanel Margin="20" Background="{StaticResource BgBrush}">
         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,20">
             <TextBlock Text="Keep this session?" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
-            <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"
-                       Text="Running ncat hops will stop. You can keep the saved list for next time, or clear it."/>
+            <TextBlock x:Name="BodyText" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"
+                       Text="Running tunnels will stop. You can keep the saved list for next time, or clear it."/>
         </StackPanel>
         <StackPanel>
             <Button IsDefault="True" Click="OnKeepClick" HorizontalAlignment="Stretch" Margin="0,0,0,8">
@@ -27,7 +27,7 @@
                                Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
                 </StackPanel>
             </Button>
-            <Button Style="{StaticResource DangerButton}" Click="OnClearClick" HorizontalAlignment="Stretch" Margin="0,0,0,8">
+            <Button x:Name="ClearButton" Style="{StaticResource DangerButton}" Click="OnClearClick" HorizontalAlignment="Stretch" Margin="0,0,0,8">
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                     <TextBlock Style="{StaticResource Glyph}" Text="&#xE74D;"/>
                     <TextBlock Text="Clear session and exit" Margin="8,0,0,0" VerticalAlignment="Center"

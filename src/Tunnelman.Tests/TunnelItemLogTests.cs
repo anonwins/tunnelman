@@ -8,7 +8,6 @@ public sealed class TunnelItemLogTests
     {
         Id = Guid.NewGuid(),
         Name = "log",
-        Kind = TunnelKinds.NcatSocks,
     });
 
     [Fact]

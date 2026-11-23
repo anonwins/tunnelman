@@ -7,5 +7,4 @@ internal enum TunnelStatus
     Running,
     Stopping,
     Failed,
-    Unsupported,
 }

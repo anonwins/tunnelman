@@ -35,8 +35,8 @@ internal sealed class UiSettings
     [JsonPropertyName("maximized")]
     public bool Maximized { get; set; }
 
-    [JsonPropertyName("ncatPath")]
-    public string? NcatPath { get; set; }
+    [JsonPropertyName("autoLockSeconds")]
+    public int AutoLockSeconds { get; set; }
 
     public static void Load()
     {
@@ -65,8 +65,14 @@ internal sealed class UiSettings
         to.NormalRight = from.NormalRight;
         to.NormalBottom = from.NormalBottom;
         to.Maximized = from.Maximized;
-        to.NcatPath = from.NcatPath;
+        to.AutoLockSeconds = NormalizeAutoLock(from.AutoLockSeconds);
     }
+
+    public static int NormalizeAutoLock(int seconds) => seconds switch
+    {
+        30 or 60 or 300 or 900 => seconds,
+        _ => 0,
+    };
 
     public void Save()
     {
@@ -98,12 +104,12 @@ internal sealed class UiSettings
         NativeWindowPlacement.TryApply(window, bounds, Maximized);
     }
 
-    public void RememberNcatPath(string? path)
+    public void SetAutoLockSeconds(int seconds)
     {
-        var next = string.IsNullOrWhiteSpace(path) ? null : path.Trim();
-        if (NcatPath == next)
+        var next = NormalizeAutoLock(seconds);
+        if (AutoLockSeconds == next)
             return;
-        NcatPath = next;
+        AutoLockSeconds = next;
         Save();
     }
 }

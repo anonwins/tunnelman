@@ -6,9 +6,13 @@ public partial class ExitConfirmWindow : Window
 {
     public bool ClearSession { get; private set; }
 
-    public ExitConfirmWindow()
+    public ExitConfirmWindow(bool allowClear = true)
     {
         InitializeComponent();
+        if (allowClear)
+            return;
+        ClearButton.Visibility = Visibility.Collapsed;
+        BodyText.Text = "Running tunnels will stop. The saved list stays encrypted.";
     }
 
     private void OnSourceInitialized(object? sender, EventArgs e) => TitleBarDarkMode.Apply(this);

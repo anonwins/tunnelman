@@ -40,17 +40,34 @@ public partial class App : System.Windows.Application
         SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
         _watchingAccent = true;
         UiSettings.Load();
-        _session = new TunnelSession();
-        try
+        var probe = new TunnelStore().Probe();
+        if (probe.Kind == TunnelProbeKind.Foreign)
         {
-            _session.Load();
-        }
-        catch (Exception)
-        {
-            _session.Load();
+            MessageBox.Show(
+                $"This session file is not encrypted for this version of Tunnelman. Move {AppPaths.TunnelsFile} aside, then start Tunnelman again.",
+                "Tunnelman",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            Shutdown();
+            return;
         }
 
-        _session.ResolveNcat();
+        if (probe.Kind == TunnelProbeKind.Unreadable)
+        {
+            MessageBox.Show(
+                TunnelStore.CouldNotRead,
+                "Tunnelman",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+            Shutdown();
+            return;
+        }
+
+        _session = new TunnelSession();
+        if (probe.Kind == TunnelProbeKind.Missing)
+            _session.PrepareCreate();
+        else
+            _session.PrepareUnlock();
         _main = new MainWindow(_session);
         _tray = new TrayController(
             _session,
@@ -58,7 +75,6 @@ public partial class App : System.Windows.Application
             () => _main.RequestExitAsync());
         _single.ShowRequested += () => Dispatcher.BeginInvoke(() => _main.RestoreFromTray());
         _main.Show();
-        _ = _session.StartEnabledAsync();
     }
 
     private void App_OnSessionEnding(object sender, SessionEndingCancelEventArgs e)

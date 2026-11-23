@@ -1,23 +1,69 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Tunnelman.Tunnels;
 
-internal sealed class TunnelStoreDocument
+internal enum TunnelProbeKind
 {
-    [JsonPropertyName("format")]
-    public string? Format { get; set; }
+    Missing,
+    Envelope,
+    Foreign,
+    Unreadable,
+}
 
-    [JsonPropertyName("version")]
-    public int Version { get; set; } = 1;
+internal readonly record struct TunnelProbe(TunnelProbeKind Kind);
 
+internal enum TunnelOpenStatus
+{
+    Ok,
+    WrongPassphrase,
+    Unreadable,
+    Foreign,
+}
+
+internal readonly record struct TunnelOpenResult(
+    TunnelOpenStatus Status,
+    IReadOnlyList<TunnelRecord> Tunnels,
+    SessionKey? Key)
+{
+    public static TunnelOpenResult Ok(IReadOnlyList<TunnelRecord> tunnels, SessionKey key) =>
+        new(TunnelOpenStatus.Ok, tunnels, key);
+
+    public static TunnelOpenResult Fail(TunnelOpenStatus status) =>
+        new(status, [], null);
+}
+
+internal sealed class TunnelPayload
+{
     [JsonPropertyName("tunnels")]
     public List<TunnelRecord> Tunnels { get; set; } = [];
 }
 
+internal sealed class TunnelEnvelope
+{
+    [JsonPropertyName("version")]
+    public int Version { get; set; } = TunnelCipher.Version;
+
+    [JsonPropertyName("kdf")]
+    public string? Kdf { get; set; } = TunnelCipher.KdfName;
+
+    [JsonPropertyName("iterations")]
+    public int Iterations { get; set; }
+
+    [JsonPropertyName("salt")]
+    public string? Salt { get; set; }
+
+    [JsonPropertyName("nonce")]
+    public string? Nonce { get; set; }
+
+    [JsonPropertyName("ciphertext")]
+    public string? Ciphertext { get; set; }
+}
+
 internal sealed class TunnelStore
 {
-    public const int CurrentVersion = 1;
     public const string CouldNotRead = "Could not read the session file.";
 
     internal static readonly JsonSerializerOptions JsonOptions = new()
@@ -28,6 +74,8 @@ internal sealed class TunnelStore
 
     private readonly string _filePath;
     private readonly object _gate = new();
+    private byte[]? _salt;
+    private int _iterations;
 
     public TunnelStore(string? filePath = null)
     {
@@ -36,139 +84,206 @@ internal sealed class TunnelStore
 
     public string FilePath => _filePath;
 
-    public TunnelStoreLoadResult Load()
+    public TunnelProbe Probe()
     {
         lock (_gate)
         {
             if (!File.Exists(_filePath))
-                return TunnelStoreLoadResult.Ok([]);
+                return new TunnelProbe(TunnelProbeKind.Missing);
+            try
+            {
+                var text = File.ReadAllText(_filePath);
+                return Classify(text) == TunnelProbeKind.Envelope
+                    ? new TunnelProbe(TunnelProbeKind.Envelope)
+                    : new TunnelProbe(TunnelProbeKind.Foreign);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return new TunnelProbe(TunnelProbeKind.Unreadable);
+            }
+        }
+    }
 
+    public TunnelOpenResult Open(string passphrase)
+    {
+        lock (_gate)
+        {
             string text;
             try
             {
+                if (!File.Exists(_filePath))
+                    return TunnelOpenResult.Fail(TunnelOpenStatus.Foreign);
                 text = File.ReadAllText(_filePath);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                return TunnelStoreLoadResult.FailUnreadable(CouldNotRead);
+                return TunnelOpenResult.Fail(TunnelOpenStatus.Unreadable);
             }
 
-            TunnelStoreDocument parsed;
+            if (!TryReadEnvelope(text, out var envelope, out var salt, out var nonce, out var cipherAndTag))
+                return TunnelOpenResult.Fail(TunnelOpenStatus.Foreign);
+
+            SessionKey? key = null;
             try
             {
-                var document = JsonSerializer.Deserialize<TunnelStoreDocument>(text, JsonOptions);
-                if (document is null)
-                    return FailCorrupt("The session file was empty.");
-                parsed = document;
+                key = SessionKey.Derive(passphrase, salt, envelope.Iterations);
+                var plain = key.Decrypt(nonce, cipherAndTag);
+                TunnelPayload? payload;
+                try
+                {
+                    payload = JsonSerializer.Deserialize<TunnelPayload>(plain, JsonOptions);
+                }
+                finally
+                {
+                    CryptographicOperations.ZeroMemory(plain);
+                }
+
+                if (payload?.Tunnels is null || payload.Tunnels.Any(t => t is null))
+                {
+                    key.Dispose();
+                    return TunnelOpenResult.Fail(TunnelOpenStatus.Unreadable);
+                }
+
+                _salt = salt.ToArray();
+                _iterations = envelope.Iterations;
+                return TunnelOpenResult.Ok(payload.Tunnels.Select(t => t.Clone()).ToList(), key);
             }
-            catch (Exception ex) when (ex is JsonException or NotSupportedException)
+            catch (AuthenticationTagMismatchException)
             {
-                return FailCorrupt(ex.Message);
+                key?.Dispose();
+                return TunnelOpenResult.Fail(TunnelOpenStatus.WrongPassphrase);
             }
-
-            if (!string.IsNullOrWhiteSpace(parsed.Format))
+            catch (CryptographicException)
             {
-                if (parsed.Format.Equals(TunnelTransfer.FormatName, StringComparison.OrdinalIgnoreCase))
-                    return ReplaceExportWithEmpty();
-                return FailCorrupt("This file is not a Tunnelman session.");
+                key?.Dispose();
+                return TunnelOpenResult.Fail(TunnelOpenStatus.Unreadable);
             }
-
-            if (parsed.Version != CurrentVersion)
-                return FailCorrupt($"Unsupported session version {parsed.Version}.");
-
-            if (parsed.Tunnels is null || parsed.Tunnels.Any(t => t is null))
-                return FailCorrupt("The session file was empty.");
-
-            return TunnelStoreLoadResult.Ok(parsed.Tunnels.Select(Clone).ToList());
+            catch (JsonException)
+            {
+                key?.Dispose();
+                return TunnelOpenResult.Fail(TunnelOpenStatus.Unreadable);
+            }
         }
     }
 
-    public void Save(IEnumerable<TunnelRecord> tunnels)
+    public SessionKey? Create(string passphrase, int iterations, IReadOnlyList<TunnelRecord> tunnels)
     {
         lock (_gate)
         {
-            WriteDocument(tunnels);
+            if (!TunnelCipher.IterationsInRange(iterations))
+                return null;
+            var salt = RandomNumberGenerator.GetBytes(TunnelCipher.SaltBytes);
+            var key = SessionKey.Derive(passphrase, salt, iterations);
+            try
+            {
+                _salt = salt;
+                _iterations = iterations;
+                Write(tunnels, key);
+                return key;
+            }
+            catch
+            {
+                _salt = null;
+                _iterations = 0;
+                key.Dispose();
+                throw;
+            }
         }
     }
 
-    public void Clear()
+    public void Save(IEnumerable<TunnelRecord> tunnels, SessionKey key)
     {
         lock (_gate)
         {
-            WriteDocument([]);
+            if (_salt is null || !TunnelCipher.IterationsInRange(_iterations))
+                throw new InvalidOperationException("The session key is not ready.");
+            Write(tunnels, key);
         }
     }
 
-    private void WriteDocument(IEnumerable<TunnelRecord> tunnels)
+    private void Write(IEnumerable<TunnelRecord> tunnels, SessionKey key)
     {
-        var document = new TunnelStoreDocument
+        var payload = new TunnelPayload
         {
-            Version = CurrentVersion,
-            Tunnels = tunnels.Select(Clone).ToList(),
+            Tunnels = tunnels.Select(t => t.Clone()).ToList(),
         };
-        AtomicFile.WriteAllText(_filePath, JsonSerializer.Serialize(document, JsonOptions));
+        var plain = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload, JsonOptions));
+        byte[] nonce;
+        byte[] cipher;
+        try
+        {
+            cipher = key.Encrypt(plain, out nonce);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(plain);
+        }
+
+        var envelope = new TunnelEnvelope
+        {
+            Version = TunnelCipher.Version,
+            Kdf = TunnelCipher.KdfName,
+            Iterations = _iterations,
+            Salt = Convert.ToBase64String(_salt!),
+            Nonce = Convert.ToBase64String(nonce),
+            Ciphertext = Convert.ToBase64String(cipher),
+        };
+        AtomicFile.WriteAllText(_filePath, JsonSerializer.Serialize(envelope, JsonOptions));
         AppPaths.TryProtectWrittenFile(_filePath);
     }
 
-    private TunnelStoreLoadResult ReplaceExportWithEmpty()
+    private static TunnelProbeKind Classify(string text)
     {
-        var bak = CopyBak();
         try
         {
-            WriteDocument([]);
+            return TryReadEnvelope(text, out _, out _, out _, out _)
+                ? TunnelProbeKind.Envelope
+                : TunnelProbeKind.Foreign;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (JsonException)
         {
-            return bak
-                ? TunnelStoreLoadResult.FailCorrupt([])
-                : TunnelStoreLoadResult.FailUnreadable(CouldNotRead);
+            return TunnelProbeKind.Foreign;
         }
-
-        return bak
-            ? TunnelStoreLoadResult.FailCorrupt([])
-            : new TunnelStoreLoadResult([], CouldNotRead, Corrupt: true, Unreadable: false, BakCopied: false);
+        catch (FormatException)
+        {
+            return TunnelProbeKind.Foreign;
+        }
     }
 
-    private TunnelStoreLoadResult FailCorrupt(string message)
+    private static bool TryReadEnvelope(
+        string text,
+        out TunnelEnvelope envelope,
+        out byte[] salt,
+        out byte[] nonce,
+        out byte[] cipherAndTag)
     {
-        var bak = CopyBak();
-        return new TunnelStoreLoadResult([], message, Corrupt: true, Unreadable: false, BakCopied: bak);
+        envelope = new TunnelEnvelope();
+        salt = [];
+        nonce = [];
+        cipherAndTag = [];
+        var parsed = JsonSerializer.Deserialize<TunnelEnvelope>(text, JsonOptions);
+        if (parsed is null)
+            return false;
+        if (parsed.Version != TunnelCipher.Version)
+            return false;
+        if (!string.Equals(parsed.Kdf, TunnelCipher.KdfName, StringComparison.Ordinal))
+            return false;
+        if (!TunnelCipher.IterationsInRange(parsed.Iterations))
+            return false;
+        if (string.IsNullOrWhiteSpace(parsed.Salt)
+            || string.IsNullOrWhiteSpace(parsed.Nonce)
+            || string.IsNullOrWhiteSpace(parsed.Ciphertext))
+            return false;
+
+        salt = Convert.FromBase64String(parsed.Salt);
+        nonce = Convert.FromBase64String(parsed.Nonce);
+        cipherAndTag = Convert.FromBase64String(parsed.Ciphertext);
+        if (salt.Length != TunnelCipher.SaltBytes
+            || nonce.Length != TunnelCipher.NonceBytes
+            || cipherAndTag.Length < TunnelCipher.TagBytes)
+            return false;
+
+        envelope = parsed;
+        return true;
     }
-
-    private bool CopyBak()
-    {
-        var bak = _filePath + ".bak";
-        try
-        {
-            if (File.Exists(_filePath))
-            {
-                File.Copy(_filePath, bak, overwrite: true);
-                return File.Exists(bak);
-            }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-        }
-
-        return false;
-    }
-
-    private static TunnelRecord Clone(TunnelRecord record) => record.Clone();
-}
-
-internal readonly record struct TunnelStoreLoadResult(
-    IReadOnlyList<TunnelRecord> Tunnels,
-    string? Error,
-    bool Corrupt,
-    bool Unreadable = false,
-    bool BakCopied = false)
-{
-    public static TunnelStoreLoadResult Ok(IReadOnlyList<TunnelRecord> tunnels) =>
-        new(tunnels, null, false);
-
-    public static TunnelStoreLoadResult FailUnreadable(string error) =>
-        new([], error, Corrupt: false, Unreadable: true);
-
-    public static TunnelStoreLoadResult FailCorrupt(IReadOnlyList<TunnelRecord> tunnels) =>
-        new(tunnels, "Previous session file was unreadable and was copied to tunnels.json.bak.", true, false, true);
 }

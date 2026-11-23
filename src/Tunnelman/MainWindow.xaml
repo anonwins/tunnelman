@@ -40,7 +40,7 @@
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
-            <Grid Grid.Row="0">
+            <Grid Grid.Row="0" Visibility="{Binding ShowSession, Converter={StaticResource BoolToVis}}">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
@@ -71,18 +71,25 @@
                         </StackPanel>
                     </Button>
                 </StackPanel>
-                <Button Grid.Column="1"
-                        Style="{StaticResource RowButton}"
-                        Click="OnNcatChipClick"
-                        ToolTip="{Binding NcatPathText}"
-                        HorizontalAlignment="Right">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Style="{StaticResource GlyphSmall}" Text="&#xE968;"/>
-                        <TextBlock Text="{Binding ToolsStatusText}"
-                                   Margin="8,0,0,0" VerticalAlignment="Center"
-                                   Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
-                    </StackPanel>
-                </Button>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <ComboBox x:Name="AutoLockBox"
+                              MinWidth="210"
+                              Margin="0,0,8,0"
+                              VerticalAlignment="Center"
+                              ToolTip="Lock when the keyboard and mouse have been idle."
+                              SelectionChanged="OnAutoLockChanged"/>
+                    <Button Style="{StaticResource RowButton}"
+                            Click="OnLockClick"
+                            IsEnabled="{Binding CanLock}"
+                            ToolTip="{Binding LockToolTip}"
+                            ToolTipService.ShowOnDisabled="True">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource GlyphSmall}" Text="&#xE72E;"/>
+                            <TextBlock Text="Lock" Margin="8,0,0,0" VerticalAlignment="Center"
+                                       Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
             </Grid>
 
             <Grid Grid.Row="2">
@@ -164,33 +171,65 @@
                     </ListBox.ItemTemplate>
                 </ListBox>
 
-                <Border VerticalAlignment="Center" HorizontalAlignment="Stretch" Padding="32">
+                <Border VerticalAlignment="Center" HorizontalAlignment="Stretch" Padding="32" MaxWidth="452">
                     <Border.Style>
                         <Style TargetType="Border" BasedOn="{StaticResource Card}">
                             <Setter Property="Visibility" Value="Collapsed"/>
                             <Style.Triggers>
-                                <DataTrigger Binding="{Binding ShowNcatSetupHint}" Value="True">
+                                <DataTrigger Binding="{Binding ShowGate}" Value="True">
                                     <Setter Property="Visibility" Value="Visible"/>
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>
                     </Border.Style>
-                    <StackPanel HorizontalAlignment="Center" MaxWidth="420">
-                        <TextBlock Style="{StaticResource GlyphLarge}" Text="&#xE783;"
+                    <StackPanel HorizontalAlignment="Stretch" MaxWidth="420">
+                        <TextBlock Style="{StaticResource GlyphLarge}" Text="&#xE72E;"
                                    HorizontalAlignment="Center" Margin="0,0,0,12"/>
-                        <TextBlock Text="Nmap ncat not found" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center"/>
-                        <TextBlock Text="Tunnelman uses Nmap ncat for SOCKS5 hops. Browse to ncat.exe or install Nmap."
+                        <TextBlock Text="{Binding GateTitle}" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                        <TextBlock Text="{Binding GateBody}"
                                    Foreground="{StaticResource MutedBrush}"
-                                   TextAlignment="Center" TextWrapping="Wrap" Margin="0,8,0,0"/>
-                        <Button Style="{StaticResource PrimaryButton}"
-                                Click="OnNcatChipClick"
-                                HorizontalAlignment="Center"
-                                Margin="0,16,0,0">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Style="{StaticResource Glyph}" Text="&#xE8B7;"/>
-                                <TextBlock Text="Find ncat" Margin="8,0,0,0" VerticalAlignment="Center"
-                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
-                            </StackPanel>
+                                   TextAlignment="Center" TextWrapping="Wrap" Margin="0,8,0,16"/>
+                        <TextBlock Text="Passphrase" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,6"/>
+                        <PasswordBox x:Name="PassphraseBox" Margin="0,0,0,10"
+                                     KeyDown="OnGateKeyDown" GotKeyboardFocus="OnGateFocus" LostKeyboardFocus="OnGateFocus"
+                                     PreviewKeyDown="OnGatePreviewKey"/>
+                        <TextBlock Text="Confirm" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,6">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding ShowConfirm}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <PasswordBox x:Name="ConfirmBox" Margin="0,0,0,10" Visibility="Collapsed"
+                                     KeyDown="OnGateKeyDown" GotKeyboardFocus="OnGateFocus" LostKeyboardFocus="OnGateFocus"
+                                     PreviewKeyDown="OnGatePreviewKey"/>
+                        <TextBlock x:Name="CapsHint" Text="Caps Lock is on."
+                                   Foreground="{StaticResource MutedBrush}" Margin="0,0,0,8" Visibility="Collapsed"/>
+                        <TextBlock x:Name="GateError"
+                                   Foreground="{StaticResource DangerBrush}"
+                                   TextWrapping="Wrap" Margin="0,0,0,8" Visibility="Collapsed"/>
+                        <TextBlock Text="There is no way to recover a forgotten passphrase."
+                                   Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,0,0,12">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding ShowConfirm}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <Button x:Name="GateButton" Style="{StaticResource PrimaryButton}"
+                                Click="OnGateClick" HorizontalAlignment="Stretch">
+                            <TextBlock x:Name="GateButtonText" Text="Unlock"
+                                       Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
                         </Button>
                     </StackPanel>
                 </Border>
@@ -210,7 +249,7 @@
                         <TextBlock Style="{StaticResource GlyphLarge}" Text="&#xE968;"
                                    HorizontalAlignment="Center" Margin="0,0,0,12"/>
                         <TextBlock Text="No tunnels" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center"/>
-                        <TextBlock Text="Add a named SOCKS5 hop. Enabled tunnels start again the next time Tunnelman opens."
+                        <TextBlock Text="Add a tunnel. Enabled ones start again the next time you unlock Tunnelman."
                                    Foreground="{StaticResource MutedBrush}"
                                    TextAlignment="Center" TextWrapping="Wrap" Margin="0,8,0,0"/>
                         <Button Command="{x:Static local:MainWindow.ImportCommand}"

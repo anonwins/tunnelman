@@ -35,30 +35,26 @@
         <StackPanel Grid.Row="0" Grid.ColumnSpan="3" Orientation="Horizontal">
             <TextBlock Style="{StaticResource Glyph}" Text="&#xE968;" FontSize="20"
                        Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center"/>
-            <TextBlock x:Name="TitleText" Text="New ncat hop" FontSize="16" FontWeight="SemiBold"
+            <TextBlock x:Name="TitleText" Text="New tunnel" FontSize="16" FontWeight="SemiBold"
                        Margin="10,0,0,0" VerticalAlignment="Center"/>
         </StackPanel>
 
         <Label Grid.Row="2" Content="Name" VerticalAlignment="Center" Margin="0,0,0,10"/>
         <TextBox x:Name="NameBox" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,0,0,10"/>
 
-        <Label Grid.Row="3" Content="Type" VerticalAlignment="Center" Margin="0,0,0,10"/>
-        <ComboBox x:Name="KindBox" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2"
-                  Margin="0,0,0,10" IsEnabled="False"/>
+        <Label Grid.Row="3" Content="Remote" VerticalAlignment="Center" Margin="0,0,0,10"/>
+        <TextBox x:Name="RemoteHostBox" Grid.Row="3" Grid.Column="1" Margin="0,0,8,10"/>
+        <TextBox x:Name="RemotePortBox" Grid.Row="3" Grid.Column="2" Margin="0,0,0,10"/>
 
-        <Label Grid.Row="4" Content="Remote" VerticalAlignment="Center" Margin="0,0,0,10"/>
-        <TextBox x:Name="RemoteHostBox" Grid.Row="4" Grid.Column="1" Margin="0,0,8,10"/>
-        <TextBox x:Name="RemotePortBox" Grid.Row="4" Grid.Column="2" Margin="0,0,0,10"/>
+        <Label Grid.Row="4" Content="Listen" VerticalAlignment="Center" Margin="0,0,0,10"/>
+        <TextBox x:Name="ListenAddressBox" Grid.Row="4" Grid.Column="1" Margin="0,0,8,10"/>
+        <TextBox x:Name="ListenPortBox" Grid.Row="4" Grid.Column="2" Margin="0,0,0,10"/>
 
-        <Label Grid.Row="5" Content="Listen" VerticalAlignment="Center" Margin="0,0,0,10"/>
-        <TextBox x:Name="ListenAddressBox" Grid.Row="5" Grid.Column="1" Margin="0,0,8,10"/>
-        <TextBox x:Name="ListenPortBox" Grid.Row="5" Grid.Column="2" Margin="0,0,0,10"/>
+        <Label Grid.Row="5" Content="SOCKS5" VerticalAlignment="Center" Margin="0,0,0,10"/>
+        <TextBox x:Name="SocksHostBox" Grid.Row="5" Grid.Column="1" Margin="0,0,8,10"/>
+        <TextBox x:Name="SocksPortBox" Grid.Row="5" Grid.Column="2" Margin="0,0,0,10"/>
 
-        <Label Grid.Row="6" Content="SOCKS5" VerticalAlignment="Center" Margin="0,0,0,10"/>
-        <TextBox x:Name="SocksHostBox" Grid.Row="6" Grid.Column="1" Margin="0,0,8,10"/>
-        <TextBox x:Name="SocksPortBox" Grid.Row="6" Grid.Column="2" Margin="0,0,0,10"/>
-
-        <TextBlock Grid.Row="7" Grid.Column="1" Grid.ColumnSpan="2"
+        <TextBlock Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="2"
                    Text="Host and port. Enable the tunnel from the list when you want it running."
                    Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,0,0,0"/>
 

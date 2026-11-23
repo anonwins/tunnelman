@@ -260,6 +260,33 @@
         </Setter>
     </Style>
 
+    <Style TargetType="PasswordBox" BasedOn="{StaticResource FieldBox}">
+        <Setter Property="CaretBrush" Value="{StaticResource TextBrush}"/>
+        <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="PasswordBox">
+                    <Border x:Name="Bd"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="6">
+                        <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource AccentFocusBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.45"/>
+                            <Setter Property="Cursor" Value="Arrow"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style x:Key="LogBox" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
         <Setter Property="Padding" Value="0,2"/>
         <Setter Property="FontSize" Value="12"/>
@@ -421,15 +448,6 @@
                             <MultiDataTrigger.Conditions>
                                 <Condition Binding="{Binding IsChecked, RelativeSource={RelativeSource TemplatedParent}}" Value="True"/>
                                 <Condition Binding="{Binding Status}" Value="Failed"/>
-                            </MultiDataTrigger.Conditions>
-                            <Setter TargetName="Track" Property="Background" Value="{StaticResource DangerDarkBrush}"/>
-                            <Setter TargetName="Track" Property="BorderBrush" Value="{StaticResource DangerBrush}"/>
-                            <Setter TargetName="Thumb" Property="Background" Value="{StaticResource DangerBrush}"/>
-                        </MultiDataTrigger>
-                        <MultiDataTrigger>
-                            <MultiDataTrigger.Conditions>
-                                <Condition Binding="{Binding IsChecked, RelativeSource={RelativeSource TemplatedParent}}" Value="True"/>
-                                <Condition Binding="{Binding Status}" Value="Unsupported"/>
                             </MultiDataTrigger.Conditions>
                             <Setter TargetName="Track" Property="Background" Value="{StaticResource DangerDarkBrush}"/>
                             <Setter TargetName="Track" Property="BorderBrush" Value="{StaticResource DangerBrush}"/>

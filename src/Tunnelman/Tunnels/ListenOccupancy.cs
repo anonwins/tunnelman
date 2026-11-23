@@ -1,5 +1,3 @@
-using System.Text.Json.Nodes;
-
 namespace Tunnelman.Tunnels;
 
 internal static class ListenOccupancy
@@ -32,10 +30,10 @@ internal static class ListenOccupancy
         return false;
     }
 
-    public static bool TryReserve(NcatSocksOptions hop, TunnelRecord record, List<(string Host, int Port)> occupied)
+    public static bool TryReserve(TunnelRecord record, List<(string Host, int Port)> occupied)
     {
-        var address = hop.ListenAddress.Trim();
-        var port = hop.ListenPort;
+        var address = record.ListenAddress.Trim();
+        var port = record.ListenPort;
         if (!ConflictsWithAny(address, port, occupied))
         {
             occupied.Add((address, port));
@@ -47,10 +45,7 @@ internal static class ListenOccupancy
             port++;
             if (ConflictsWithAny(address, port, occupied))
                 continue;
-            hop.ListenPort = port;
-            var clone = record.Options is null ? new JsonObject() : (JsonObject)record.Options.DeepClone();
-            clone["listenPort"] = port;
-            record.Options = clone;
+            record.ListenPort = port;
             occupied.Add((address, port));
             return true;
         }

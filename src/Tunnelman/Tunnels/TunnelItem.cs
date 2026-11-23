@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -28,8 +27,6 @@ internal sealed class TunnelItem : INotifyPropertyChanged
 
     public string Name => Record.Name;
 
-    public string Kind => Record.Kind;
-
     public bool Enabled
     {
         get => Record.Enabled;
@@ -43,12 +40,10 @@ internal sealed class TunnelItem : INotifyPropertyChanged
         }
     }
 
-    public bool IsSupported => TunnelKindRegistry.Find(Kind) is not null;
-
-    public string ListenText => TryOptions()?.ListenText ?? "";
-    public string RemoteText => TryOptions()?.RemoteText ?? "";
-    public string ProxyText => TryOptions()?.ProxyText ?? "";
-    public bool HasProxy => TryOptions()?.HasProxy == true;
+    public string ListenText => Record.ListenText;
+    public string RemoteText => Record.RemoteText;
+    public string ProxyText => Record.ProxyText;
+    public bool HasProxy => Record.HasProxy;
 
     public TunnelStatus Status
     {
@@ -69,7 +64,6 @@ internal sealed class TunnelItem : INotifyPropertyChanged
         TunnelStatus.Running => "Running",
         TunnelStatus.Stopping => "Stopping",
         TunnelStatus.Failed => "Failed",
-        TunnelStatus.Unsupported => "Unsupported",
         _ => "Stopped",
     };
 
@@ -87,7 +81,7 @@ internal sealed class TunnelItem : INotifyPropertyChanged
         }
     }
 
-    public bool CanToggle => !IsBusy && (IsSupported || Enabled);
+    public bool CanToggle => !IsBusy;
 
     public bool CanMutate => !IsBusy;
 
@@ -105,12 +99,10 @@ internal sealed class TunnelItem : INotifyPropertyChanged
     public void RefreshIdentity()
     {
         OnPropertyChanged(nameof(Name));
-        OnPropertyChanged(nameof(Kind));
         OnPropertyChanged(nameof(ListenText));
         OnPropertyChanged(nameof(RemoteText));
         OnPropertyChanged(nameof(ProxyText));
         OnPropertyChanged(nameof(HasProxy));
-        OnPropertyChanged(nameof(IsSupported));
         OnPropertyChanged(nameof(CanToggle));
         OnPropertyChanged(nameof(CanMutate));
         OnPropertyChanged(nameof(Enabled));
@@ -136,8 +128,19 @@ internal sealed class TunnelItem : INotifyPropertyChanged
     public void Mark(TunnelStatus status)
     {
         Status = status;
-        if (status is TunnelStatus.Stopped or TunnelStatus.Failed or TunnelStatus.Unsupported)
+        if (status is TunnelStatus.Stopped or TunnelStatus.Failed)
             IsBusy = false;
+    }
+
+    public void ClearLog()
+    {
+        lock (_lines)
+        {
+            _lines.Clear();
+            _log.Clear();
+        }
+
+        OnPropertyChanged(nameof(LogText));
     }
 
     public void AppendLog(string line)
@@ -153,12 +156,6 @@ internal sealed class TunnelItem : INotifyPropertyChanged
 
         OnPropertyChanged(nameof(LogText));
     }
-
-    private NcatSocksOptions? TryOptions() =>
-        TunnelKindRegistry.Is(Kind, TunnelKinds.NcatSocks)
-        && NcatSocksOptions.TryParse(Record.Options, out var options, out _)
-            ? options
-            : null;
 
     private void OnPropertyChanged([CallerMemberName] string? name = null) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));

@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using Tunnelman.Tunnels;
 
 namespace Tunnelman.Tests;
@@ -9,86 +8,33 @@ public sealed class TunnelTransferTests
     [Fact]
     public void Write_then_read_export_v1_omits_enabled()
     {
-        var dir = NewDir("tunnelman-xfer-write-");
+        var dir = SessionTestHost.NewDir("tunnelman-xfer-write-");
         try
         {
             var file = Path.Combine(dir, "tunnels.tunnelman.json");
-            var id = Guid.NewGuid();
-            TunnelTransfer.Write(file, [
-                new TunnelRecord
-                {
-                    Id = id,
-                    Name = "office",
-                    Kind = TunnelKinds.NcatSocks,
-                    Enabled = true,
-                    Options = Hop(22001),
-                },
-            ]);
+            var record = SessionTestHost.Hop("office", 22001);
+            record.Id = Guid.NewGuid();
+            record.Enabled = true;
+            TunnelTransfer.Write(file, [record]);
 
             var text = File.ReadAllText(file);
             Assert.Contains("\"format\":", text, StringComparison.Ordinal);
-            Assert.DoesNotContain("\"Format\"", text, StringComparison.Ordinal);
             Assert.DoesNotContain("\"enabled\"", text, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("\"kind\"", text, StringComparison.OrdinalIgnoreCase);
             using var doc = JsonDocument.Parse(text);
             var root = doc.RootElement;
             Assert.Equal(TunnelTransfer.FormatName, root.GetProperty("format").GetString());
             Assert.Equal(1, root.GetProperty("version").GetInt32());
-            var exportedAt = root.GetProperty("exportedAt").GetDateTimeOffset();
-            Assert.Equal(TimeSpan.Zero, exportedAt.Offset);
+            Assert.Equal(TimeSpan.Zero, root.GetProperty("exportedAt").GetDateTimeOffset().Offset);
 
             Assert.True(TunnelTransfer.TryRead(file, out var records, out var error));
             Assert.Equal("", error);
-            var record = Assert.Single(records);
-            Assert.Equal(id, record.Id);
-            Assert.Equal("office", record.Name);
-            Assert.Equal(TunnelKinds.NcatSocks, record.Kind);
-        }
-        finally
-        {
-            Directory.Delete(dir, recursive: true);
-        }
-    }
-
-    [Fact]
-    public void Write_strips_secret_keys()
-    {
-        var dir = NewDir("tunnelman-xfer-secret-");
-        try
-        {
-            var file = Path.Combine(dir, "out.tunnelman.json");
-            TunnelTransfer.Write(file, [
-                new TunnelRecord
-                {
-                    Name = "future",
-                    Kind = "rathole",
-                    Options = new JsonObject { ["token"] = "abc", ["host"] = "x" },
-                },
-            ]);
-            var text = File.ReadAllText(file);
-            Assert.DoesNotContain("abc", text, StringComparison.Ordinal);
-            Assert.Contains("\"host\"", text, StringComparison.Ordinal);
-        }
-        finally
-        {
-            Directory.Delete(dir, recursive: true);
-        }
-    }
-
-    [Fact]
-    public void TryRead_session_file_and_missing_version()
-    {
-        var dir = NewDir("tunnelman-xfer-session-");
-        try
-        {
-            var file = Path.Combine(dir, "tunnels.json");
-            File.WriteAllText(file, """{"version":1,"tunnels":[{"id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","name":"up","kind":"ncat-socks","enabled":true,"options":{"remoteHost":"example.test","listenPort":22001,"listenAddress":"127.0.0.1","socksHost":"127.0.0.1","socksPort":25560,"remotePort":22}}]}""");
-            Assert.True(TunnelTransfer.TryRead(file, out var records, out _));
-            Assert.True(Assert.Single(records).Enabled);
-
-            var missing = Path.Combine(dir, "no-ver.json");
-            File.WriteAllText(missing, """{"tunnels":[{"name":"a","kind":"ncat-socks","options":{"remoteHost":"example.test","listenPort":22002,"listenAddress":"127.0.0.1","socksHost":"127.0.0.1","socksPort":25560,"remotePort":22}}]}""");
-            Assert.True(TunnelTransfer.TryRead(missing, out var again, out _));
-            Assert.Equal("a", Assert.Single(again).Name);
+            var loaded = Assert.Single(records);
+            Assert.Equal(record.Id, loaded.Id);
+            Assert.Equal("office", loaded.Name);
+            Assert.False(loaded.Enabled);
+            Assert.Equal("example.test", loaded.RemoteHost);
+            Assert.Equal(22001, loaded.ListenPort);
         }
         finally
         {
@@ -106,7 +52,7 @@ public sealed class TunnelTransferTests
     [InlineData("""{"format":"tunnelman-export","version":"1","tunnels":[{"name":"a"}]}""", TunnelTransfer.NotExport)]
     public void TryRead_rejects_bad_files(string json, string expected)
     {
-        var dir = NewDir("tunnelman-xfer-bad-");
+        var dir = SessionTestHost.NewDir("tunnelman-xfer-bad-");
         try
         {
             var file = Path.Combine(dir, "x.json");
@@ -121,13 +67,30 @@ public sealed class TunnelTransferTests
     }
 
     [Fact]
-    public void TryRead_accepts_format_case()
+    public void TryRead_string_listen_port_rejects_the_file()
     {
-        var dir = NewDir("tunnelman-xfer-case-");
+        var dir = SessionTestHost.NewDir("tunnelman-xfer-port-");
         try
         {
             var file = Path.Combine(dir, "x.json");
-            File.WriteAllText(file, """{"format":"Tunnelman-Export","version":1,"tunnels":[{"name":"a","kind":"ncat-socks","options":{"remoteHost":"example.test","listenPort":22001,"listenAddress":"127.0.0.1","socksHost":"127.0.0.1","socksPort":25560,"remotePort":22}}]}""");
+            File.WriteAllText(file, """{"format":"tunnelman-export","version":1,"tunnels":[{"name":"bad","remoteHost":"example.test","listenPort":"22001","listenAddress":"127.0.0.1","socksHost":"127.0.0.1","socksPort":25560,"remotePort":22}]}""");
+            Assert.False(TunnelTransfer.TryRead(file, out _, out var error));
+            Assert.Equal(TunnelTransfer.NotExport, error);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void TryRead_accepts_format_case()
+    {
+        var dir = SessionTestHost.NewDir("tunnelman-xfer-case-");
+        try
+        {
+            var file = Path.Combine(dir, "x.json");
+            File.WriteAllText(file, """{"format":"Tunnelman-Export","version":1,"tunnels":[{"name":"a","remoteHost":"example.test","listenPort":22001,"listenAddress":"127.0.0.1","socksHost":"127.0.0.1","socksPort":25560,"remotePort":22}]}""");
             Assert.True(TunnelTransfer.TryRead(file, out var records, out _));
             Assert.Equal("a", Assert.Single(records).Name);
         }
@@ -140,14 +103,11 @@ public sealed class TunnelTransferTests
     [Fact]
     public void PrepareImport_uniques_names_and_listens()
     {
-        var existing = new[]
-        {
-            new TunnelRecord { Name = "Office", Kind = TunnelKinds.NcatSocks, Options = Hop(22001) },
-        };
+        var existing = new[] { SessionTestHost.Hop("Office", 22001) };
         var incoming = new[]
         {
-            new TunnelRecord { Name = " Office ", Kind = TunnelKinds.NcatSocks, Options = Hop(22001) },
-            new TunnelRecord { Name = "Office (2)", Kind = TunnelKinds.NcatSocks, Options = Hop(22003) },
+            SessionTestHost.Hop(" Office ", 22001),
+            SessionTestHost.Hop("Office (2)", 22003),
         };
 
         var rows = TunnelTransfer.PrepareImport(existing, incoming);
@@ -155,13 +115,11 @@ public sealed class TunnelTransferTests
         Assert.Equal("Office (2)", rows[0].Record.Name);
         Assert.Contains("Renamed from Office", rows[0].Note, StringComparison.Ordinal);
         Assert.Contains("Listen was 127.0.0.1:22001", rows[0].Note, StringComparison.Ordinal);
-        Assert.Equal(22002, PortOf(rows[0].Record));
+        Assert.Equal(22002, rows[0].Record.ListenPort);
         Assert.Equal("Office (2) (2)", rows[1].Record.Name);
         Assert.True(rows[1].CanSelect);
 
-        var kept = Assert.Single(TunnelTransfer.PrepareImport(existing, [
-            new TunnelRecord { Name = "Office (2)", Kind = TunnelKinds.NcatSocks, Options = Hop(22003) },
-        ]));
+        var kept = Assert.Single(TunnelTransfer.PrepareImport(existing, [SessionTestHost.Hop("Office (2)", 22003)]));
         Assert.Equal("Office (2)", kept.Record.Name);
         Assert.True(kept.CanSelect);
     }
@@ -169,12 +127,9 @@ public sealed class TunnelTransferTests
     [Fact]
     public void PrepareImport_invalid_does_not_occupy_name()
     {
-        var incoming = new[]
-        {
-            new TunnelRecord { Name = "Office", Kind = TunnelKinds.NcatSocks, Options = new JsonObject() },
-            new TunnelRecord { Name = "Office", Kind = TunnelKinds.NcatSocks, Options = Hop(22001) },
-        };
-        var rows = TunnelTransfer.PrepareImport([], incoming);
+        var invalid = SessionTestHost.Hop("Office", 22001);
+        invalid.RemoteHost = "";
+        var rows = TunnelTransfer.PrepareImport([], [invalid, SessionTestHost.Hop("Office", 22001)]);
         Assert.False(rows[0].CanSelect);
         Assert.Equal("This entry is invalid.", rows[0].Note);
         Assert.True(rows[1].CanSelect);
@@ -182,66 +137,12 @@ public sealed class TunnelTransferTests
     }
 
     [Fact]
-    public void PrepareImport_unknown_null_options_and_omitted_kind()
-    {
-        var unknown = TunnelTransfer.PrepareImport([], [
-            new TunnelRecord { Name = "future", Kind = "rathole", Options = null },
-        ]);
-        Assert.True(Assert.Single(unknown).CanSelect);
-
-        var dir = NewDir("tunnelman-xfer-kind-");
-        try
-        {
-            var file = Path.Combine(dir, "x.json");
-            File.WriteAllText(file, """{"format":"tunnelman-export","version":1,"tunnels":[{"name":"plain","options":{"remoteHost":"example.test","listenPort":22001,"listenAddress":"127.0.0.1","socksHost":"127.0.0.1","socksPort":25560,"remotePort":22}}]}""");
-            Assert.True(TunnelTransfer.TryRead(file, out var records, out _));
-            var row = Assert.Single(TunnelTransfer.PrepareImport([], records));
-            Assert.Equal(TunnelKinds.NcatSocks, row.Record.Kind);
-            Assert.True(row.CanSelect);
-        }
-        finally
-        {
-            Directory.Delete(dir, recursive: true);
-        }
-    }
-
-    [Fact]
-    public void PrepareImport_string_listen_port_is_invalid_row()
-    {
-        var options = new JsonObject
-        {
-            ["remoteHost"] = "example.test",
-            ["listenPort"] = "22001",
-            ["listenAddress"] = "127.0.0.1",
-            ["socksHost"] = "127.0.0.1",
-            ["socksPort"] = 25560,
-            ["remotePort"] = 22,
-        };
-        var row = Assert.Single(TunnelTransfer.PrepareImport([], [
-            new TunnelRecord { Name = "bad", Kind = TunnelKinds.NcatSocks, Options = options },
-        ]));
-        Assert.False(row.CanSelect);
-    }
-
-    [Fact]
-    public void PrepareImport_keeps_extra_option_keys_on_listen_remap()
-    {
-        var options = Hop(22001);
-        options["extra"] = "keep";
-        var rows = TunnelTransfer.PrepareImport(
-            [new TunnelRecord { Name = "one", Kind = TunnelKinds.NcatSocks, Options = Hop(22001) }],
-            [new TunnelRecord { Name = "two", Kind = TunnelKinds.NcatSocks, Options = options }]);
-        Assert.Equal("keep", rows[0].Record.Options?["extra"]?.GetValue<string>());
-        Assert.Equal(JsonValueKind.Number, rows[0].Record.Options?["listenPort"]?.GetValueKind());
-    }
-
-    [Fact]
     public void BuildExport_does_not_rename()
     {
         var rows = TunnelTransfer.BuildExport([
-            new TunnelRecord { Name = "Office", Kind = TunnelKinds.NcatSocks, Options = Hop(22001) },
-            new TunnelRecord { Name = "Office", Kind = TunnelKinds.NcatSocks, Options = Hop(22001) },
-            new TunnelRecord { Name = "  ", Kind = TunnelKinds.NcatSocks, Options = Hop(22002) },
+            SessionTestHost.Hop("Office", 22001),
+            SessionTestHost.Hop("Office", 22001),
+            SessionTestHost.Hop("  ", 22002),
         ]);
         Assert.Equal("Office", rows[0].Record.Name);
         Assert.Equal("Office", rows[1].Record.Name);
@@ -252,51 +153,25 @@ public sealed class TunnelTransferTests
     }
 
     [Fact]
-    public void PrepareImport_canonicalizes_kind_and_empty_kind_is_ncat()
-    {
-        var existing = new[]
-        {
-            new TunnelRecord { Name = "Office", Kind = TunnelKinds.NcatSocks, Options = Hop(22001) },
-        };
-        var incoming = new[]
-        {
-            new TunnelRecord { Name = "Office", Kind = "Ncat-Socks", Options = Hop(22001) },
-            new TunnelRecord { Name = "plain", Kind = "", Options = Hop(22003) },
-            new TunnelRecord { Name = "also", Kind = "   ", Options = Hop(22004) },
-        };
-        var rows = TunnelTransfer.PrepareImport(existing, incoming);
-        Assert.Equal(TunnelKinds.NcatSocks, rows[0].Record.Kind);
-        Assert.Equal("Office (2)", rows[0].Record.Name);
-        Assert.Equal(22002, PortOf(rows[0].Record));
-        Assert.Equal("Office", rows[0].Source.Name);
-        Assert.Equal(22001, PortOf(rows[0].Source));
-        Assert.Equal(TunnelKinds.NcatSocks, rows[1].Record.Kind);
-        Assert.Equal(TunnelKinds.NcatSocks, rows[2].Record.Kind);
-    }
-
-    [Fact]
     public void PrepareImport_subset_keeps_original_office_listen()
     {
-        var existing = new[]
-        {
-            new TunnelRecord { Name = "Office", Kind = TunnelKinds.NcatSocks, Options = Hop(22001) },
-        };
+        var existing = new[] { SessionTestHost.Hop("Office", 22001) };
         var incoming = new[]
         {
-            new TunnelRecord { Name = "Office", Kind = TunnelKinds.NcatSocks, Options = Hop(22001) },
-            new TunnelRecord { Name = "Office (2)", Kind = TunnelKinds.NcatSocks, Options = Hop(22003) },
+            SessionTestHost.Hop("Office", 22001),
+            SessionTestHost.Hop("Office (2)", 22003),
         };
         var preview = TunnelTransfer.PrepareImport(existing, incoming);
         Assert.Equal("Office (2)", preview[0].Record.Name);
-        Assert.Equal(22002, PortOf(preview[0].Record));
+        Assert.Equal(22002, preview[0].Record.ListenPort);
         Assert.Equal("Office (2) (2)", preview[1].Record.Name);
 
         var subset = TunnelTransfer.PrepareImport(existing, [preview[1].Source]);
         var onlyB = Assert.Single(subset);
         Assert.Equal("Office (2)", onlyB.Record.Name);
-        Assert.Equal(22003, PortOf(onlyB.Record));
+        Assert.Equal(22003, onlyB.Record.ListenPort);
         Assert.Equal("Office", existing[0].Name);
-        Assert.Equal(22001, PortOf(existing[0]));
+        Assert.Equal(22001, existing[0].ListenPort);
     }
 
     [Fact]
@@ -313,54 +188,12 @@ public sealed class TunnelTransferTests
     }
 
     [Fact]
-    public void Write_strips_nested_and_snake_case_secrets()
-    {
-        var dir = NewDir("tunnelman-xfer-nested-");
-        try
-        {
-            var file = Path.Combine(dir, "out.tunnelman.json");
-            var options = new JsonObject
-            {
-                ["host"] = "x",
-                ["api_key"] = "nested-secret",
-                ["extra"] = new JsonObject { ["privateKey"] = "pk", ["safe"] = "ok" },
-                ["list"] = new JsonArray { new JsonObject { ["password"] = "pw" } },
-            };
-            TunnelTransfer.Write(file, [
-                new TunnelRecord { Name = "future", Kind = "rathole", Options = options },
-            ]);
-            var text = File.ReadAllText(file);
-            Assert.DoesNotContain("nested-secret", text, StringComparison.Ordinal);
-            Assert.DoesNotContain("pk", text, StringComparison.Ordinal);
-            Assert.DoesNotContain("pw", text, StringComparison.Ordinal);
-            Assert.Contains("\"host\"", text, StringComparison.Ordinal);
-            Assert.Contains("\"safe\"", text, StringComparison.Ordinal);
-        }
-        finally
-        {
-            Directory.Delete(dir, recursive: true);
-        }
-    }
-
-    [Fact]
     public void PrepareImport_unspecified_listen_overlaps_any_host()
     {
-        var existing = new[]
-        {
-            new TunnelRecord
-            {
-                Name = "any",
-                Kind = TunnelKinds.NcatSocks,
-                Options = new NcatSocksOptions { RemoteHost = "example.test", ListenAddress = "0.0.0.0", ListenPort = 22001 }.ToJson(),
-            },
-        };
-        var incoming = new[]
-        {
-            new TunnelRecord { Name = "local", Kind = TunnelKinds.NcatSocks, Options = Hop(22001) },
-        };
-        var row = Assert.Single(TunnelTransfer.PrepareImport(existing, incoming));
+        var existing = new[] { SessionTestHost.Hop("any", 22001, "0.0.0.0") };
+        var row = Assert.Single(TunnelTransfer.PrepareImport(existing, [SessionTestHost.Hop("local", 22001)]));
         Assert.True(row.CanSelect);
-        Assert.Equal(22002, PortOf(row.Record));
+        Assert.Equal(22002, row.Record.ListenPort);
         Assert.Contains("Listen was", row.Note, StringComparison.Ordinal);
     }
 
@@ -370,21 +203,5 @@ public sealed class TunnelTransferTests
         Assert.Equal(@"C:\out\tunnels.tunnelman.json", TunnelTransfer.NormalizeExportPath(@"C:\out\tunnels.tunnelman.json.json"));
         Assert.Equal(@"C:\out\backup.tunnelman.json", TunnelTransfer.NormalizeExportPath(@"C:\out\backup"));
         Assert.Equal(@"C:\out\a.json", TunnelTransfer.NormalizeExportPath(@"C:\out\a.json"));
-    }
-
-    private static string NewDir(string prefix)
-    {
-        var dir = Path.Combine(Path.GetTempPath(), prefix + Guid.NewGuid().ToString("n"));
-        Directory.CreateDirectory(dir);
-        return dir;
-    }
-
-    private static JsonObject Hop(int listenPort) =>
-        new NcatSocksOptions { RemoteHost = "example.test", ListenPort = listenPort }.ToJson();
-
-    private static int PortOf(TunnelRecord record)
-    {
-        Assert.True(NcatSocksOptions.TryParse(record.Options, out var options, out _));
-        return options.ListenPort;
     }
 }
