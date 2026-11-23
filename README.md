@@ -8,16 +8,12 @@ Built in the same visual language as SSH Agent GUI.
 
 - **Named tunnels** — add, edit, and delete hops
 - **Enable switch** — turn a tunnel on or off from the list
-- **Encrypted session** — the saved list is encrypted with a passphrase asked at startup and after a lock
-- **Lock** — hide the tunnel list while hops that are already running keep their open connections
-- **Auto-lock** — lock after the keyboard and mouse have been idle
-- **Tray lock** — optionally lock as soon as the window hides
-- **Stop dialing when locked** — optional; open connections stay up and new ones wait until unlock
+- **Plain session** — the saved list is a JSON file and the app opens onto it
 - **Exit prompt** — keep the session, clear it, or cancel
 - **Live log** — connect and disconnect lines for the selected tunnel
 - **System tray** — minimize to the tray and keep hops running
 - **Single instance** — launching again brings the existing window forward
-- **Export / import** — pick tunnels and write or read a `*.tunnelman.json` file
+- **Export / import** — pick tunnels and write or read a plain `*.tunnelman.json` file
 
 ## Requirements
 
@@ -37,9 +33,9 @@ Run:
 src\Tunnelman\bin\Release\net9.0-windows\Tunnelman.exe
 ```
 
-The first launch asks for a passphrase. Settings and the encrypted tunnel session live under `%AppData%\Tunnelman\`.
+The tunnel list lives in `%AppData%\Tunnelman\tunnels.json`. Window placement lives in `ui.json` beside it. Enabled tunnels start when the app opens.
 
-`*.tunnelman.json` exports are encrypted with the session passphrase. The file on disk is an envelope. The passphrase protects each tunnel's `name`, `listenAddress`, `listenPort`, `socksHost`, `socksPort`, `remoteHost`, and `remotePort`. SOCKS can be left empty. Exports do not include enable state or `ui.json`. Imported tunnels stay off until you enable them. A Release build stamps `0.1.0.N` from `BuildNumber.txt`.
+`*.tunnelman.json` exports are plain JSON. Each tunnel includes `name`, `enabled`, `listenAddress`, `listenPort`, `socksHost`, `socksPort`, `remoteHost`, and `remotePort`. SOCKS can be left empty. Import keeps the enabled flag from the file. A Release build stamps `0.1.0.N` from `BuildNumber.txt`.
 
 ## Usage
 
@@ -50,9 +46,7 @@ The first launch asks for a passphrase. Settings and the encrypted tunnel sessio
 | Import tunnels | **Import**, or `Ctrl+I` |
 | Start or stop | Flip the switch on the row |
 | Edit / delete | Row buttons on the right |
-| Settings | **Settings**, next to **Lock** |
-| Lock | **Lock** |
-| Hide the window | `Escape` (app stays in the tray; locks when tray lock is on) |
+| Hide the window | `Escape` (the app stays in the tray) |
 | Exit | Close the window or tray **Exit**, then keep or clear the session |
 
 ## Development

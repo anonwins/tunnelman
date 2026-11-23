@@ -40,11 +40,7 @@
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
-            <Grid Grid.Row="0" Visibility="{Binding ShowSession, Converter={StaticResource BoolToVis}}">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
+            <Grid Grid.Row="0">
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
                     <Button Style="{StaticResource PrimaryButton}" Click="OnAddClick" Margin="0,0,8,0">
                         <StackPanel Orientation="Horizontal">
@@ -67,26 +63,6 @@
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Style="{StaticResource Glyph}" Text="&#xE8B5;"/>
                             <TextBlock Text="Import" Margin="8,0,0,0" VerticalAlignment="Center"
-                                       Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
-                        </StackPanel>
-                    </Button>
-                </StackPanel>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
-                    <Button Style="{StaticResource RowButton}"
-                            Click="OnSettingsClick"
-                            Margin="0,0,8,0"
-                            ToolTip="Settings">
-                        <TextBlock Style="{StaticResource GlyphSmall}" Text="&#xE713;"
-                                   Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
-                    </Button>
-                    <Button Style="{StaticResource RowButton}"
-                            Click="OnLockClick"
-                            IsEnabled="{Binding CanLock}"
-                            ToolTip="{Binding LockToolTip}"
-                            ToolTipService.ShowOnDisabled="True">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Style="{StaticResource GlyphSmall}" Text="&#xE72E;"/>
-                            <TextBlock Text="Lock" Margin="8,0,0,0" VerticalAlignment="Center"
                                        Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
                         </StackPanel>
                     </Button>
@@ -178,69 +154,6 @@
                     </ListBox.ItemTemplate>
                 </ListBox>
 
-                <Border VerticalAlignment="Center" HorizontalAlignment="Stretch" Padding="32" MaxWidth="452">
-                    <Border.Style>
-                        <Style TargetType="Border" BasedOn="{StaticResource Card}">
-                            <Setter Property="Visibility" Value="Collapsed"/>
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding ShowGate}" Value="True">
-                                    <Setter Property="Visibility" Value="Visible"/>
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </Border.Style>
-                    <StackPanel HorizontalAlignment="Stretch" MaxWidth="420">
-                        <TextBlock Style="{StaticResource GlyphLarge}" Text="&#xE72E;"
-                                   HorizontalAlignment="Center" Margin="0,0,0,12"/>
-                        <TextBlock Text="{Binding GateTitle}" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center"/>
-                        <TextBlock Text="{Binding GateBody}"
-                                   Foreground="{StaticResource MutedBrush}"
-                                   TextAlignment="Center" TextWrapping="Wrap" Margin="0,8,0,16"/>
-                        <TextBlock Text="Passphrase" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,6"/>
-                        <PasswordBox x:Name="PassphraseBox" Margin="0,0,0,10"
-                                     KeyDown="OnGateKeyDown" GotKeyboardFocus="OnGateFocus" LostKeyboardFocus="OnGateFocus"
-                                     PreviewKeyDown="OnGatePreviewKey"/>
-                        <TextBlock Text="Confirm" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,6">
-                            <TextBlock.Style>
-                                <Style TargetType="TextBlock">
-                                    <Setter Property="Visibility" Value="Collapsed"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding ShowConfirm}" Value="True">
-                                            <Setter Property="Visibility" Value="Visible"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </TextBlock.Style>
-                        </TextBlock>
-                        <PasswordBox x:Name="ConfirmBox" Margin="0,0,0,10" Visibility="Collapsed"
-                                     KeyDown="OnGateKeyDown" GotKeyboardFocus="OnGateFocus" LostKeyboardFocus="OnGateFocus"
-                                     PreviewKeyDown="OnGatePreviewKey"/>
-                        <TextBlock x:Name="CapsHint" Text="Caps Lock is on."
-                                   Foreground="{StaticResource MutedBrush}" Margin="0,0,0,8" Visibility="Collapsed"/>
-                        <TextBlock x:Name="GateError"
-                                   Foreground="{StaticResource DangerBrush}"
-                                   TextWrapping="Wrap" Margin="0,0,0,8" Visibility="Collapsed"/>
-                        <TextBlock Text="There is no way to recover a forgotten passphrase."
-                                   Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,0,0,12">
-                            <TextBlock.Style>
-                                <Style TargetType="TextBlock">
-                                    <Setter Property="Visibility" Value="Collapsed"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding ShowConfirm}" Value="True">
-                                            <Setter Property="Visibility" Value="Visible"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </TextBlock.Style>
-                        </TextBlock>
-                        <Button x:Name="GateButton" Style="{StaticResource PrimaryButton}"
-                                Click="OnGateClick" HorizontalAlignment="Stretch">
-                            <TextBlock x:Name="GateButtonText" Text="Unlock"
-                                       Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
-                        </Button>
-                    </StackPanel>
-                </Border>
-
                 <Border VerticalAlignment="Center" HorizontalAlignment="Stretch" Padding="32">
                     <Border.Style>
                         <Style TargetType="Border" BasedOn="{StaticResource Card}">
@@ -256,7 +169,7 @@
                         <TextBlock Style="{StaticResource GlyphLarge}" Text="&#xE968;"
                                    HorizontalAlignment="Center" Margin="0,0,0,12"/>
                         <TextBlock Text="No tunnels" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center"/>
-                        <TextBlock Text="Add a tunnel. Enabled ones start again the next time you unlock Tunnelman."
+                        <TextBlock Text="Add a tunnel, or import a file. Enabled tunnels start listening."
                                    Foreground="{StaticResource MutedBrush}"
                                    TextAlignment="Center" TextWrapping="Wrap" Margin="0,8,0,0"/>
                         <Button Command="{x:Static local:MainWindow.ImportCommand}"

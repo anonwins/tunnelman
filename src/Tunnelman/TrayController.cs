@@ -1,36 +1,29 @@
-using System.ComponentModel;
 using System.Drawing;
 using System.Reflection;
 using System.Windows.Forms;
-using Tunnelman.Tunnels;
 
 namespace Tunnelman;
 
 internal sealed class TrayController : IDisposable
 {
     private readonly NotifyIcon _icon;
-    private readonly TunnelSession _session;
     private readonly Action _show;
     private readonly Func<Task> _exit;
-    private readonly ToolStripMenuItem _stateItem;
     private readonly string _version;
     private bool _disposed;
 
-    public TrayController(TunnelSession session, Action show, Func<Task> exit)
+    public TrayController(Action show, Func<Task> exit)
     {
-        _session = session;
         _show = show;
         _exit = exit;
         _version = VersionText();
 
-        _stateItem = new ToolStripMenuItem(StateText()) { Enabled = false };
         var versionItem = new ToolStripMenuItem(_version) { Enabled = false };
 
         var menu = new ContextMenuStrip
         {
             Renderer = new DarkMenuRenderer(),
         };
-        menu.Items.Add(_stateItem);
         menu.Items.Add(versionItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("Open", null, (_, _) => _show()));
@@ -39,13 +32,11 @@ internal sealed class TrayController : IDisposable
         _icon = new NotifyIcon
         {
             Visible = true,
-            Text = TooltipText(),
+            Text = "Tunnelman",
             Icon = LoadIcon(),
             ContextMenuStrip = menu,
         };
         _icon.MouseClick += OnMouseClick;
-        _session.PropertyChanged += OnSessionPropertyChanged;
-        UpdateMenu();
     }
 
     private void OnMouseClick(object? sender, MouseEventArgs e)
@@ -53,32 +44,6 @@ internal sealed class TrayController : IDisposable
         if (e.Button == MouseButtons.Left)
             _show();
     }
-
-    private void OnSessionPropertyChanged(object? sender, PropertyChangedEventArgs e)
-    {
-        if (e.PropertyName is not (nameof(TunnelSession.ShowSession) or null))
-            return;
-
-        void Update()
-        {
-            if (_disposed)
-                return;
-            UpdateMenu();
-            _icon.Text = TooltipText();
-        }
-
-        var dispatcher = Application.Current?.Dispatcher;
-        if (dispatcher is null || dispatcher.CheckAccess())
-            Update();
-        else
-            dispatcher.BeginInvoke(Update);
-    }
-
-    private void UpdateMenu() => _stateItem.Text = StateText();
-
-    private string StateText() => _session.ShowSession ? "Unlocked" : "Locked";
-
-    private string TooltipText() => "Tunnelman - " + StateText();
 
     private static string VersionText()
     {
@@ -139,7 +104,6 @@ internal sealed class TrayController : IDisposable
         if (_disposed)
             return;
         _disposed = true;
-        _session.PropertyChanged -= OnSessionPropertyChanged;
         _icon.MouseClick -= OnMouseClick;
         _icon.Visible = false;
         _icon.Dispose();

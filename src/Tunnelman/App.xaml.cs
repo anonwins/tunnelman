@@ -40,11 +40,12 @@ public partial class App : System.Windows.Application
         SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
         _watchingAccent = true;
         UiSettings.Load();
-        var probe = new TunnelStore().Probe();
+        var store = new TunnelStore();
+        var probe = store.Probe();
         if (probe.Kind == TunnelProbeKind.Foreign)
         {
             MessageBox.Show(
-                $"This session file is not encrypted for this version of Tunnelman. Move {AppPaths.TunnelsFile} aside, then start Tunnelman again.",
+                TunnelStore.ForeignFile,
                 "Tunnelman",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
@@ -63,14 +64,23 @@ public partial class App : System.Windows.Application
             return;
         }
 
-        _session = new TunnelSession();
-        if (probe.Kind == TunnelProbeKind.Missing)
-            _session.PrepareCreate();
-        else
-            _session.PrepareUnlock();
+        _session = new TunnelSession(store);
+        var loaded = _session.Load();
+        if (loaded.Status is TunnelLoadStatus.Foreign or TunnelLoadStatus.Unreadable)
+        {
+            MessageBox.Show(
+                loaded.Status == TunnelLoadStatus.Unreadable ? TunnelStore.CouldNotRead : TunnelStore.ForeignFile,
+                "Tunnelman",
+                MessageBoxButton.OK,
+                loaded.Status == TunnelLoadStatus.Unreadable ? MessageBoxImage.Error : MessageBoxImage.Warning);
+            Shutdown();
+            return;
+        }
+
         _main = new MainWindow(_session);
+        var session = _session;
+        _main.Loaded += async (_, _) => await session.StartEnabledAsync();
         _tray = new TrayController(
-            _session,
             () => _main.RestoreFromTray(),
             () => _main.RequestExitAsync());
         _single.ShowRequested += () => Dispatcher.BeginInvoke(() => _main.RestoreFromTray());

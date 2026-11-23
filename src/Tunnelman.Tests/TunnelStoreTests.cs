@@ -5,7 +5,7 @@ namespace Tunnelman.Tests;
 public sealed class TunnelStoreTests
 {
     [Fact]
-    public void Round_trip_uses_iterations_from_the_file()
+    public void Round_trip_keeps_enabled_and_endpoints()
     {
         var dir = SessionTestHost.NewDir("tunnelman-store-");
         var file = Path.Combine(dir, "tunnels.json");
@@ -15,47 +15,21 @@ public sealed class TunnelStoreTests
             var kept = SessionTestHost.Hop("ssh", 22001);
             kept.Id = Guid.NewGuid();
             kept.Enabled = true;
-            var key = store.Create(SessionTestHost.Passphrase, iterations: 4, [kept]);
-            Assert.NotNull(key);
-            key.Dispose();
+            store.Save([kept]);
 
             var text = File.ReadAllText(file);
-            Assert.Contains("\"iterations\": 4", text, StringComparison.Ordinal);
-            Assert.DoesNotContain("600000", text, StringComparison.Ordinal);
+            Assert.Contains("\"version\": 1", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("kdf", text, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("ciphertext", text, StringComparison.OrdinalIgnoreCase);
 
-            var opened = store.Open(SessionTestHost.Passphrase);
-            Assert.Equal(TunnelOpenStatus.Ok, opened.Status);
+            var opened = store.Load();
+            Assert.Equal(TunnelLoadStatus.Ok, opened.Status);
             var loaded = Assert.Single(opened.Tunnels);
             Assert.Equal(kept.Id, loaded.Id);
             Assert.Equal("ssh", loaded.Name);
             Assert.True(loaded.Enabled);
             Assert.Equal("example.test", loaded.RemoteHost);
             Assert.Equal(22001, loaded.ListenPort);
-            opened.Key?.Dispose();
-        }
-        finally
-        {
-            Directory.Delete(dir, recursive: true);
-        }
-    }
-
-    [Fact]
-    public void Wrong_passphrase_leaves_the_file_unchanged()
-    {
-        var dir = SessionTestHost.NewDir("tunnelman-store-wrong-");
-        var file = Path.Combine(dir, "tunnels.json");
-        try
-        {
-            var store = new TunnelStore(file);
-            var key = store.Create(SessionTestHost.Passphrase, 1, [SessionTestHost.Hop("ssh", 22001)]);
-            key!.Dispose();
-            var before = File.ReadAllBytes(file);
-
-            var opened = store.Open("not-the-passphrase");
-            Assert.Equal(TunnelOpenStatus.WrongPassphrase, opened.Status);
-            Assert.Null(opened.Key);
-            Assert.Equal(before, File.ReadAllBytes(file));
-            Assert.False(File.Exists(file + ".bak"));
         }
         finally
         {
@@ -77,8 +51,8 @@ public sealed class TunnelStoreTests
             Assert.Equal(original, File.ReadAllText(file));
             Assert.False(File.Exists(file + ".bak"));
 
-            var opened = store.Open(SessionTestHost.Passphrase);
-            Assert.Equal(TunnelOpenStatus.Foreign, opened.Status);
+            var opened = store.Load();
+            Assert.Equal(TunnelLoadStatus.Foreign, opened.Status);
             Assert.Equal(original, File.ReadAllText(file));
         }
         finally
@@ -88,7 +62,36 @@ public sealed class TunnelStoreTests
     }
 
     [Fact]
-    public void Locked_file_is_unreadable_and_untouched()
+    public void Old_envelope_is_foreign_and_untouched()
+    {
+        var dir = SessionTestHost.NewDir("tunnelman-store-envelope-");
+        var file = Path.Combine(dir, "tunnels.json");
+        const string original = """
+            {
+              "version": 1,
+              "kdf": "pbkdf2-sha256",
+              "iterations": 600000,
+              "salt": "gpFqhOJVyz1s88WPXC0OdQ==",
+              "nonce": "pbQZ+HQ4Po6RMAJ5",
+              "ciphertext": "AAAA"
+            }
+            """;
+        File.WriteAllText(file, original);
+        try
+        {
+            var store = new TunnelStore(file);
+            Assert.Equal(TunnelProbeKind.Foreign, store.Probe().Kind);
+            Assert.Equal(TunnelLoadStatus.Foreign, store.Load().Status);
+            Assert.Equal(original, File.ReadAllText(file));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Unreadable_file_is_left_untouched()
     {
         var dir = SessionTestHost.NewDir("tunnelman-store-lock-");
         var file = Path.Combine(dir, "tunnels.json");
@@ -119,13 +122,11 @@ public sealed class TunnelStoreTests
         try
         {
             var store = new TunnelStore(file);
-            var key = store.Create(SessionTestHost.Passphrase, 1, [SessionTestHost.Hop("a", 22001)]);
-            Assert.NotNull(key);
-            store.Save([], key);
-            key.Dispose();
-            var opened = store.Open(SessionTestHost.Passphrase);
+            store.Save([SessionTestHost.Hop("a", 22001)]);
+            store.Save([]);
+            var opened = store.Load();
             Assert.Empty(opened.Tunnels);
-            opened.Key?.Dispose();
+            Assert.Contains("\"version\": 1", File.ReadAllText(file), StringComparison.Ordinal);
         }
         finally
         {

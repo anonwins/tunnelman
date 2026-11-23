@@ -1,7 +1,6 @@
 using System.Buffers;
 using System.Net;
 using System.Net.Sockets;
-using System.Security.Cryptography;
 using System.Text;
 
 namespace Tunnelman.Tunnels;
@@ -13,10 +12,8 @@ internal sealed class SocksHopRuntime : ITunnelRuntime
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
     private Task? _accept;
-    private byte[]? _sealed;
-    private IDialSecrets? _secrets;
+    private DialEndpoint? _target;
     private bool _stopping;
-    private bool _dialSuspended;
 
     public bool IsRunning
     {
@@ -27,21 +24,13 @@ internal sealed class SocksHopRuntime : ITunnelRuntime
         }
     }
 
-    public bool DialSuspended
-    {
-        get
-        {
-            lock (_gate)
-                return _dialSuspended;
-        }
-    }
-
     public event Action<int>? Exited;
 
-    public Task StartAsync(TunnelRecord record, IDialSecrets secrets, Action<string> log, CancellationToken cancellationToken)
+    public Task StartAsync(TunnelRecord record, Action<string> log, CancellationToken cancellationToken)
     {
         TcpListener? listener = null;
         var owned = false;
+        var target = DialEndpoint.Copy(record);
         try
         {
             var endpoint = ResolveListen(record.ListenAddress, record.ListenPort);
@@ -53,39 +42,31 @@ internal sealed class SocksHopRuntime : ITunnelRuntime
             {
                 _listener = listener;
                 _cts = cts;
-                _secrets = secrets;
+                _target = target;
                 owned = true;
                 listener = null;
-                _sealed = secrets.Seal(DialBlob.Encode(record));
                 _stopping = false;
-                _dialSuspended = false;
                 _accept = Task.Run(() => AcceptLoop(_listener!, log, cts.Token));
             }
         }
         catch (Exception ex) when (!owned && (ex is SocketException or InvalidOperationException))
         {
             listener?.Server.Dispose();
-            DisposeSecrets(secrets);
             throw new InvalidOperationException($"Could not listen on {record.ListenAddress.Trim()}:{record.ListenPort}");
         }
         catch
         {
-            if (!owned)
+            if (!owned && listener is not null)
             {
-                if (listener is not null)
+                try
                 {
-                    try
-                    {
-                        listener.Stop();
-                    }
-                    catch (SocketException)
-                    {
-                    }
-
-                    listener.Server.Dispose();
+                    listener.Stop();
+                }
+                catch (SocketException)
+                {
                 }
 
-                DisposeSecrets(secrets);
+                listener.Server.Dispose();
             }
 
             throw;
@@ -93,60 +74,6 @@ internal sealed class SocksHopRuntime : ITunnelRuntime
 
         log("Listening");
         return Task.CompletedTask;
-    }
-
-    public void SuspendDial()
-    {
-        IDialSecrets? secrets;
-        byte[]? sealedBlob;
-        lock (_gate)
-        {
-            if (_listener is null || _stopping)
-                return;
-            _dialSuspended = true;
-            secrets = _secrets;
-            _secrets = null;
-            sealedBlob = _sealed;
-            _sealed = null;
-        }
-
-        Zero(sealedBlob);
-        DisposeSecrets(secrets);
-    }
-
-    public void ResumeDial(TunnelRecord record, IDialSecrets secrets)
-    {
-        byte[] sealedBlob;
-        try
-        {
-            sealedBlob = secrets.Seal(DialBlob.Encode(record));
-        }
-        catch
-        {
-            DisposeSecrets(secrets);
-            throw;
-        }
-
-        byte[]? replaced;
-        IDialSecrets? previous;
-        lock (_gate)
-        {
-            if (_listener is null || _stopping)
-            {
-                Zero(sealedBlob);
-                DisposeSecrets(secrets);
-                return;
-            }
-
-            previous = _secrets;
-            replaced = _sealed;
-            _secrets = secrets;
-            _sealed = sealedBlob;
-            _dialSuspended = false;
-        }
-
-        Zero(replaced);
-        DisposeSecrets(previous);
     }
 
     public async Task StopAsync()
@@ -260,142 +187,78 @@ internal sealed class SocksHopRuntime : ITunnelRuntime
 
     private async Task<TcpClient?> DialAsync(Action<string> log, CancellationToken cancellationToken)
     {
-        byte[]? sealedCopy;
-        IDialSecrets? secrets;
+        DialEndpoint? target;
         lock (_gate)
-        {
-            secrets = _secrets;
-            if (_sealed is null)
-                sealedCopy = null;
-            else
-            {
-                sealedCopy = GC.AllocateUninitializedArray<byte>(_sealed.Length);
-                _sealed.AsSpan().CopyTo(sealedCopy);
-            }
-        }
+            target = _target;
 
-        if (sealedCopy is null || secrets is null)
+        if (target is null)
             return null;
 
-        try
-        {
-            return await DialOpenedAsync(secrets, sealedCopy, log, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            Zero(sealedCopy);
-        }
+        return await DialOpenedAsync(target, log, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<TcpClient?> DialOpenedAsync(
-        IDialSecrets secrets,
-        byte[] sealedCopy,
+    private static async Task<TcpClient?> DialOpenedAsync(
+        DialEndpoint target,
         Action<string> log,
         CancellationToken cancellationToken)
     {
-        if (!TryOpenDial(secrets, sealedCopy, out var socksHost, out var socksPort, out var remoteHost, out var remoteCopy, out var remotePort))
+        var socksHost = target.SocksHost;
+        var socksPort = target.SocksPort;
+        var remoteHost = target.RemoteHost;
+        var remotePort = target.RemotePort;
+        var direct = socksHost.Length == 0 || socksPort == 0;
+        var proxy = new TcpClient();
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(15));
+        byte[]? request = null;
+        try
         {
-            log("Connection failed");
+            if (direct)
+            {
+                await proxy.ConnectAsync(remoteHost, remotePort, timeout.Token).ConfigureAwait(false);
+            }
+            else
+            {
+                await proxy.ConnectAsync(socksHost, socksPort, timeout.Token).ConfigureAwait(false);
+                var stream = proxy.GetStream();
+                await stream.WriteAsync(new byte[] { 0x05, 0x01, 0x00 }, timeout.Token).ConfigureAwait(false);
+                var method = new byte[2];
+                await ReadExactAsync(stream, method, timeout.Token).ConfigureAwait(false);
+                if (method[0] != 0x05 || method[1] != 0x00)
+                {
+                    proxy.Dispose();
+                    log("Proxy requires authentication");
+                    return null;
+                }
+
+                request = BuildConnect(remoteHost, remotePort);
+                await stream.WriteAsync(request, timeout.Token).ConfigureAwait(false);
+                if (!await ReadReplyAsync(stream, timeout.Token).ConfigureAwait(false))
+                {
+                    proxy.Dispose();
+                    log("Proxy refused the connection");
+                    return null;
+                }
+            }
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or SocketException or IOException)
+        {
+            proxy.Dispose();
+            log(direct ? "Connection failed" : "Proxy connection failed");
             return null;
         }
-
-        var direct = socksHost.Length == 0 || socksPort == 0;
-        try
-        {
-            var proxy = new TcpClient();
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(TimeSpan.FromSeconds(15));
-            byte[]? request = null;
-            try
-            {
-                if (direct)
-                {
-                    await proxy.ConnectAsync(remoteHost, remotePort, timeout.Token).ConfigureAwait(false);
-                }
-                else
-                {
-                    await proxy.ConnectAsync(socksHost, socksPort, timeout.Token).ConfigureAwait(false);
-                    var stream = proxy.GetStream();
-                    await stream.WriteAsync(new byte[] { 0x05, 0x01, 0x00 }, timeout.Token).ConfigureAwait(false);
-                    var method = new byte[2];
-                    await ReadExactAsync(stream, method, timeout.Token).ConfigureAwait(false);
-                    if (method[0] != 0x05 || method[1] != 0x00)
-                    {
-                        proxy.Dispose();
-                        log("Proxy requires authentication");
-                        return null;
-                    }
-
-                    request = BuildConnect(remoteHost, remoteCopy, remotePort);
-                    await stream.WriteAsync(request, timeout.Token).ConfigureAwait(false);
-                    if (!await ReadReplyAsync(stream, timeout.Token).ConfigureAwait(false))
-                    {
-                        proxy.Dispose();
-                        log("Proxy refused the connection");
-                        return null;
-                    }
-                }
-            }
-            catch (Exception ex) when (ex is OperationCanceledException or SocketException or IOException)
-            {
-                proxy.Dispose();
-                log(direct ? "Connection failed" : "Proxy connection failed");
-                return null;
-            }
-            finally
-            {
-                if (request is not null)
-                    CryptographicOperations.ZeroMemory(request);
-                CryptographicOperations.ZeroMemory(remoteCopy);
-            }
-
-            return proxy;
-        }
         finally
         {
-            CryptographicOperations.ZeroMemory(remoteCopy);
+            if (request is not null)
+                Array.Clear(request);
         }
+
+        return proxy;
     }
 
-    private static bool TryOpenDial(
-        IDialSecrets secrets,
-        byte[] sealedBlob,
-        out string socksHost,
-        out int socksPort,
-        out string remoteHost,
-        out byte[] remoteCopy,
-        out int remotePort)
+    private static byte[] BuildConnect(string remoteHost, int remotePort)
     {
-        socksHost = "";
-        socksPort = 0;
-        remoteHost = "";
-        remoteCopy = [];
-        remotePort = 0;
-        var plainLength = sealedBlob.Length - TunnelCipher.NonceBytes - TunnelCipher.TagBytes;
-        if (plainLength < 1)
-            return false;
-        var rented = ArrayPool<byte>.Shared.Rent(plainLength);
-        try
-        {
-            secrets.Open(sealedBlob, rented.AsSpan(0, plainLength));
-            if (!DialBlob.TryRead(rented.AsSpan(0, plainLength), out socksHost, out socksPort, out remoteHost, out var remoteBytes, out remotePort))
-                return false;
-            remoteCopy = remoteBytes.ToArray();
-            return true;
-        }
-        catch (Exception ex) when (ex is AuthenticationTagMismatchException or ObjectDisposedException)
-        {
-            return false;
-        }
-        finally
-        {
-            CryptographicOperations.ZeroMemory(rented.AsSpan(0, plainLength));
-            ArrayPool<byte>.Shared.Return(rented);
-        }
-    }
-
-    private static byte[] BuildConnect(string remoteHost, byte[] remoteBytes, int remotePort)
-    {
+        var remoteBytes = Encoding.UTF8.GetBytes(remoteHost);
         var ipv4 = TunnelRecord.IsIPv4(remoteHost);
         var addressLength = ipv4 ? 4 : 1 + remoteBytes.Length;
         var request = new byte[4 + addressLength + 2];
@@ -508,19 +371,13 @@ internal sealed class SocksHopRuntime : ITunnelRuntime
         TcpListener? listener;
         CancellationTokenSource? cts;
         TcpClient[] clients;
-        IDialSecrets? secrets;
-        byte[]? sealedBlob;
         lock (_gate)
         {
             listener = _listener;
             cts = _cts;
-            secrets = _secrets;
             _listener = null;
             _cts = null;
-            _secrets = null;
-            _dialSuspended = false;
-            sealedBlob = _sealed;
-            _sealed = null;
+            _target = null;
 
             clients = _clients.ToArray();
             _clients.Clear();
@@ -545,78 +402,21 @@ internal sealed class SocksHopRuntime : ITunnelRuntime
         foreach (var client in clients)
             client.Dispose();
         cts?.Dispose();
-        Zero(sealedBlob);
-        DisposeSecrets(secrets);
     }
 
-    private static void Zero(byte[]? bytes)
+    private sealed class DialEndpoint
     {
-        if (bytes is not null)
-            CryptographicOperations.ZeroMemory(bytes);
-    }
+        public required string SocksHost { get; init; }
+        public required int SocksPort { get; init; }
+        public required string RemoteHost { get; init; }
+        public required int RemotePort { get; init; }
 
-    private static void DisposeSecrets(IDialSecrets? secrets)
-    {
-        if (secrets is IDisposable disposable)
-            disposable.Dispose();
-    }
-}
-
-internal static class DialBlob
-{
-    public static byte[] Encode(TunnelRecord record)
-    {
-        var socks = Encoding.UTF8.GetBytes(record.SocksHost.Trim());
-        var remote = Encoding.UTF8.GetBytes(record.RemoteHost.Trim());
-        var blob = new byte[1 + socks.Length + 2 + 1 + remote.Length + 2];
-        var offset = 0;
-        blob[offset++] = (byte)socks.Length;
-        socks.CopyTo(blob.AsSpan(offset));
-        offset += socks.Length;
-        blob[offset++] = (byte)(record.SocksPort >> 8);
-        blob[offset++] = (byte)record.SocksPort;
-        blob[offset++] = (byte)remote.Length;
-        remote.CopyTo(blob.AsSpan(offset));
-        offset += remote.Length;
-        blob[offset++] = (byte)(record.RemotePort >> 8);
-        blob[offset] = (byte)record.RemotePort;
-        CryptographicOperations.ZeroMemory(socks);
-        CryptographicOperations.ZeroMemory(remote);
-        return blob;
-    }
-
-    public static bool TryRead(
-        ReadOnlySpan<byte> data,
-        out string socksHost,
-        out int socksPort,
-        out string remoteHost,
-        out ReadOnlySpan<byte> remoteBytes,
-        out int remotePort)
-    {
-        socksHost = "";
-        socksPort = 0;
-        remoteHost = "";
-        remoteBytes = default;
-        remotePort = 0;
-        if (data.Length < 1)
-            return false;
-        var socksLength = data[0];
-        if (data.Length < 1 + socksLength + 2 + 1)
-            return false;
-        var socks = data.Slice(1, socksLength);
-        var offset = 1 + socksLength;
-        socksPort = (data[offset] << 8) | data[offset + 1];
-        offset += 2;
-        var remoteLength = data[offset++];
-        if (data.Length < offset + remoteLength + 2)
-            return false;
-        remoteBytes = data.Slice(offset, remoteLength);
-        offset += remoteLength;
-        remotePort = (data[offset] << 8) | data[offset + 1];
-        socksHost = Encoding.UTF8.GetString(socks);
-        remoteHost = Encoding.UTF8.GetString(remoteBytes);
-        var direct = socksLength == 0 && socksPort == 0;
-        var proxied = socksLength > 0 && socksPort is >= 1 and <= 65535;
-        return (direct || proxied) && remotePort is >= 1 and <= 65535 && remoteLength > 0;
+        public static DialEndpoint Copy(TunnelRecord record) => new()
+        {
+            SocksHost = record.SocksHost.Trim(),
+            SocksPort = record.SocksPort,
+            RemoteHost = record.RemoteHost.Trim(),
+            RemotePort = record.RemotePort,
+        };
     }
 }

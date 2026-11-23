@@ -17,12 +17,8 @@ public partial class MainWindow : Window
     public static readonly RoutedCommand HideCommand = new();
 
     private readonly TunnelSession _session;
-    private readonly DispatcherTimer _idleTimer;
     private bool _allowClose;
     private bool _exitPromptOpen;
-    private bool _gateBusy;
-    private bool _locking;
-    private DateTime _lastInputUtc = DateTime.UtcNow;
     private TunnelItem? _logItem;
 
     internal MainWindow(TunnelSession session)
@@ -31,16 +27,11 @@ public partial class MainWindow : Window
         DataContext = session;
         InitializeComponent();
         LogCard.Visibility = Visibility.Collapsed;
-        GateButtonText.Text = _session.ShowConfirm ? "Create session" : "Unlock";
-        ConfirmBox.Visibility = _session.ShowConfirm ? Visibility.Visible : Visibility.Collapsed;
-        CommandBindings.Add(new CommandBinding(AddTunnelCommand, (s, e) => OnAddClick(s, e), (_, e) => e.CanExecute = _session.ShowSession));
+        CommandBindings.Add(new CommandBinding(AddTunnelCommand, (s, e) => OnAddClick(s, e), (_, e) => e.CanExecute = true));
         CommandBindings.Add(new CommandBinding(ExportCommand, (_, _) => OnExportClick(), (_, e) => e.CanExecute = _session.HasTunnels));
-        CommandBindings.Add(new CommandBinding(ImportCommand, (_, _) => OnImportClick(), (_, e) => e.CanExecute = _session.ShowSession));
+        CommandBindings.Add(new CommandBinding(ImportCommand, (_, _) => OnImportClick(), (_, e) => e.CanExecute = true));
         CommandBindings.Add(new CommandBinding(HideCommand, (_, _) => HideToTray()));
         _session.PropertyChanged += OnSessionPropertyChanged;
-        _idleTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        _idleTimer.Tick += OnIdleTick;
-        Loaded += OnLoaded;
         UpdateExportTip();
         UpdateLogVisibility();
     }
@@ -54,8 +45,6 @@ public partial class MainWindow : Window
         Activate();
         Topmost = true;
         Topmost = false;
-        NoteInput();
-        FocusGate();
     }
 
     public void HideToTray()
@@ -63,14 +52,6 @@ public partial class MainWindow : Window
         SaveUi();
         Hide();
         ShowInTaskbar = false;
-        LockIfHidden();
-    }
-
-    private void LockIfHidden()
-    {
-        if (!UiSettings.Current.LockWhenHidden || IsVisible || _allowClose || !_session.CanLock)
-            return;
-        BeginLock();
     }
 
     public void AllowCloseForShutdown() => _allowClose = true;
@@ -80,7 +61,7 @@ public partial class MainWindow : Window
         if (_allowClose || _exitPromptOpen)
             return;
 
-        var needsPrompt = _session.RunningCount > 0 || (_session.ShowSession && _session.Tunnels.Count > 0);
+        var needsPrompt = _session.RunningCount > 0 || _session.Tunnels.Count > 0;
         if (!needsPrompt)
         {
             await _session.StopAllAsync().ConfigureAwait(true);
@@ -89,10 +70,9 @@ public partial class MainWindow : Window
         }
 
         _exitPromptOpen = true;
-        _session.SetExitPrompt(true);
         try
         {
-            var dialog = new ExitConfirmWindow(allowClear: _session.ShowSession);
+            var dialog = new ExitConfirmWindow(allowClear: true);
             if (IsVisible)
             {
                 dialog.Owner = this;
@@ -121,7 +101,6 @@ public partial class MainWindow : Window
         finally
         {
             _exitPromptOpen = false;
-            _session.SetExitPrompt(false);
         }
     }
 
@@ -168,23 +147,12 @@ public partial class MainWindow : Window
 
     private void OnSessionPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName is nameof(TunnelSession.HasTunnels) or nameof(TunnelSession.ShowSession) or null)
+        if (e.PropertyName is nameof(TunnelSession.HasTunnels) or null)
         {
             CommandManager.InvalidateRequerySuggested();
             UpdateExportTip();
             UpdateLogVisibility();
-            ConfirmBox.Visibility = _session.ShowConfirm ? Visibility.Visible : Visibility.Collapsed;
-            if (!_gateBusy)
-                GateButtonText.Text = _session.ShowConfirm ? "Create session" : "Unlock";
-            if (_session.ShowSession)
-                NoteInput();
-            EnsureIdleTimer();
-            if (_session.ShowGate)
-                FocusGate();
         }
-
-        if (e.PropertyName == nameof(TunnelSession.CanLock))
-            LockIfHidden();
     }
 
     private void UpdateExportTip() =>
@@ -209,7 +177,7 @@ public partial class MainWindow : Window
             _session.SetNotice(TunnelTransfer.CountLabel("Exported", picker.CompletedCount));
     }
 
-    private void OnImportClick()
+    private async void OnImportClick()
     {
         var open = new Microsoft.Win32.OpenFileDialog
         {
@@ -220,56 +188,22 @@ public partial class MainWindow : Window
         };
         if (open.ShowDialog(IsVisible ? this : null) != true)
             return;
-        if (_session.Key is not { } key)
-        {
-            MessageBox.Show(this, TunnelTransfer.CouldNotRead, "Tunnelman", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
 
-        var read = TunnelTransfer.Read(open.FileName, key);
-        IReadOnlyList<TunnelRecord> records;
-        if (read.Status == ExportReadStatus.Ok)
-        {
-            records = read.Tunnels;
-        }
-        else if (read.Status == ExportReadStatus.WrongPassphrase)
-        {
-            var unlock = new ExportUnlockWindow(
-                read.Salt ?? [],
-                read.Iterations,
-                derived => TunnelTransfer.Read(open.FileName, derived));
-            if (IsVisible)
-            {
-                unlock.Owner = this;
-            }
-            else
-            {
-                unlock.WindowStartupLocation = WindowStartupLocation.CenterScreen;
-                unlock.ShowInTaskbar = true;
-            }
-
-            if (unlock.ShowDialog() != true)
-            {
-                if (unlock.Failure is { } failure)
-                    MessageBox.Show(this, failure, "Tunnelman", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
-            }
-
-            records = unlock.Records;
-        }
-        else
+        var read = TunnelTransfer.Read(open.FileName);
+        if (read.Status != ExportReadStatus.Ok)
         {
             MessageBox.Show(this, read.Error, "Tunnelman", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
-        var prepared = TunnelTransfer.PrepareImport(_session.SnapshotRecords(), records);
+        var prepared = TunnelTransfer.PrepareImport(_session.SnapshotRecords(), read.Tunnels);
         var picker = new TransferWindow(export: false, prepared, _session.SnapshotRecords(), open.FileName, selected =>
             _session.TryImport(selected, out _, out var saveError) ? null : saveError)
         {
             Owner = IsVisible ? this : null,
         };
-        picker.ShowDialog();
+        if (picker.ShowDialog() == true)
+            await _session.StartEnabledAsync().ConfigureAwait(true);
     }
 
     private void OnAddClick(object sender, RoutedEventArgs e)
@@ -405,243 +339,9 @@ public partial class MainWindow : Window
         LogBox.ScrollToEnd();
     }
 
-    private void OnLoaded(object sender, RoutedEventArgs e)
-    {
-        InputManager.Current.PreProcessInput += OnPreProcessInput;
-        Closed += (_, _) => InputManager.Current.PreProcessInput -= OnPreProcessInput;
-        NoteInput();
-        FocusGate();
-        EnsureIdleTimer();
-    }
-
-    private void OnPreProcessInput(object? sender, PreProcessInputEventArgs e)
-    {
-        if (e.StagingItem.Input is System.Windows.Input.KeyEventArgs
-            or System.Windows.Input.MouseEventArgs
-            or TouchEventArgs
-            or StylusEventArgs)
-            NoteInput();
-    }
-
-    private void NoteInput() => _lastInputUtc = DateTime.UtcNow;
-
-    private void EnsureIdleTimer()
-    {
-        if (!_session.ShowSession || UiSettings.Current.AutoLockSeconds <= 0)
-        {
-            _idleTimer.Stop();
-            return;
-        }
-
-        if (!_idleTimer.IsEnabled)
-            _idleTimer.Start();
-    }
-
-    private void OnSettingsClick(object sender, RoutedEventArgs e)
-    {
-        var dialog = new SettingsWindow { Owner = this };
-        if (dialog.ShowDialog() != true)
-            return;
-        NoteInput();
-        EnsureIdleTimer();
-    }
-
-    private void OnIdleTick(object? sender, EventArgs e)
-    {
-        if (!_session.ShowSession || UiSettings.Current.AutoLockSeconds <= 0)
-        {
-            _idleTimer.Stop();
-            return;
-        }
-
-        if (DateTime.UtcNow - _lastInputUtc < TimeSpan.FromSeconds(UiSettings.Current.AutoLockSeconds))
-            return;
-        if (!_session.CanLock || _locking)
-            return;
-        BeginLock();
-    }
-
-    private void OnLockClick(object sender, RoutedEventArgs e) => BeginLock();
-
-    private void BeginLock()
-    {
-        if (_locking || !_session.CanLock)
-            return;
-        var closed = false;
-        foreach (Window window in OwnedWindows)
-        {
-            if (!window.IsVisible)
-                continue;
-            try
-            {
-                window.DialogResult = false;
-                closed = true;
-            }
-            catch (InvalidOperationException)
-            {
-                window.Close();
-                closed = true;
-            }
-        }
-
-        if (closed)
-        {
-            _locking = true;
-            Dispatcher.BeginInvoke(FinishLock, DispatcherPriority.Background);
-            return;
-        }
-
-        FinishLock();
-    }
-
-    private void FinishLock()
-    {
-        _locking = false;
-        TunnelList.SelectedItem = null;
-        LogBox.Clear();
-        if (!_session.TryLock())
-            return;
-        ShowGateError("");
-        PassphraseBox.Clear();
-        ConfirmBox.Clear();
-        UpdateLogVisibility();
-        FocusGate();
-    }
-
-    private async void OnGateClick(object sender, RoutedEventArgs e) => await SubmitGateAsync();
-
-    private void OnGateKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
-    {
-        UpdateCapsLock();
-        if (e.Key != Key.Enter)
-            return;
-        e.Handled = true;
-        _ = SubmitGateAsync();
-    }
-
-    private void OnGatePreviewKey(object sender, System.Windows.Input.KeyEventArgs e) => UpdateCapsLock();
-
-    private void OnGateFocus(object sender, RoutedEventArgs e) => UpdateCapsLock();
-
-    private async Task SubmitGateAsync()
-    {
-        if (_gateBusy || !_session.ShowGate)
-            return;
-        var passphrase = PassphraseBox.Password;
-        var confirm = ConfirmBox.Password;
-        var creating = _session.ShowConfirm;
-        if (creating && !TunnelSession.TryValidateNewPassphrase(passphrase, confirm, out var invalid))
-        {
-            ShowGateError(invalid);
-            return;
-        }
-
-        _gateBusy = true;
-        SetGateEnabled(false);
-        GateButtonText.Text = creating ? "Saving…" : "Checking…";
-        _session.SetTransientStatus("Checking passphrase…");
-        ShowGateError("");
-        try
-        {
-            if (creating)
-            {
-                var key = await Task.Run(() => _session.CreateFile(passphrase, TunnelCipher.DefaultIterations)).ConfigureAwait(true);
-                if (!IsLoaded)
-                {
-                    key?.Dispose();
-                    _session.Dispose();
-                    return;
-                }
-
-                if (key is null)
-                {
-                    ShowGateError(TunnelSession.CouldNotSave);
-                    _session.PrepareCreate();
-                    return;
-                }
-
-                _session.ApplyCreated(key);
-            }
-            else
-            {
-                var opened = await Task.Run(() => _session.OpenFile(passphrase)).ConfigureAwait(true);
-                if (!IsLoaded)
-                {
-                    opened.Key?.Dispose();
-                    _session.Dispose();
-                    return;
-                }
-
-                if (opened.Status == TunnelOpenStatus.WrongPassphrase)
-                {
-                    opened.Key?.Dispose();
-                    PassphraseBox.Clear();
-                    ShowGateError(TunnelSession.WrongPassphrase);
-                    _session.RestoreStatus();
-                    FocusGate();
-                    return;
-                }
-
-                if (opened.Status != TunnelOpenStatus.Ok || opened.Key is null)
-                {
-                    opened.Key?.Dispose();
-                    ShowGateError(TunnelStore.CouldNotRead);
-                    return;
-                }
-
-                _session.ApplyOpened(opened);
-            }
-
-            PassphraseBox.Clear();
-            ConfirmBox.Clear();
-            ShowGateError("");
-            if (_session.ConsumeFreshUnlock())
-                await _session.StartEnabledAsync().ConfigureAwait(true);
-        }
-        finally
-        {
-            _gateBusy = false;
-            SetGateEnabled(true);
-            if (_session.ShowGate)
-                GateButtonText.Text = _session.ShowConfirm ? "Create session" : "Unlock";
-        }
-    }
-
-    private void SetGateEnabled(bool enabled)
-    {
-        PassphraseBox.IsEnabled = enabled;
-        ConfirmBox.IsEnabled = enabled;
-        GateButton.IsEnabled = enabled;
-    }
-
-    private void ShowGateError(string message)
-    {
-        GateError.Text = message;
-        GateError.Visibility = string.IsNullOrEmpty(message) ? Visibility.Collapsed : Visibility.Visible;
-    }
-
-    private void UpdateCapsLock()
-    {
-        var focused = PassphraseBox.IsKeyboardFocused || ConfirmBox.IsKeyboardFocused;
-        CapsHint.Visibility = focused && Keyboard.IsKeyToggled(Key.CapsLock)
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-    }
-
-    private void FocusGate()
-    {
-        if (!_session.ShowGate)
-            return;
-        Dispatcher.BeginInvoke(() =>
-        {
-            if (_session.ShowGate)
-                PassphraseBox.Focus();
-        }, DispatcherPriority.Input);
-    }
-
     private void UpdateLogVisibility()
     {
-        LogCard.Visibility = _session.ShowSession && TunnelList.SelectedItem is not null
+        LogCard.Visibility = TunnelList.SelectedItem is not null
             ? Visibility.Visible
             : Visibility.Collapsed;
     }

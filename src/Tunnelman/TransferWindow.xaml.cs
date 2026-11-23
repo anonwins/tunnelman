@@ -48,8 +48,8 @@ public partial class TransferWindow : Window
         Title = export ? "Export tunnels" : "Import tunnels";
         HeadingText.Text = Title;
         BodyText.Text = export
-            ? "Choose what to write into one file. The file is encrypted with this session's passphrase."
-            : "Choose what to add. New tunnels stay off until you enable them.";
+            ? "Choose what to write into one plain file."
+            : "Choose what to add. Each tunnel keeps the enabled flag from the file.";
         PrimaryGlyph.Text = export ? "\uEDE1" : "\uE8B5";
         if (!export && !string.IsNullOrWhiteSpace(sourcePath))
         {

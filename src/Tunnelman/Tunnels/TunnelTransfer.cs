@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -9,8 +7,6 @@ namespace Tunnelman.Tunnels;
 internal enum ExportReadStatus
 {
     Ok,
-    WrongPassphrase,
-    NotEncrypted,
     NotExport,
     NoTunnels,
     Unreadable,
@@ -19,39 +15,13 @@ internal enum ExportReadStatus
 internal readonly record struct ExportReadResult(
     ExportReadStatus Status,
     IReadOnlyList<TunnelRecord> Tunnels,
-    string Error,
-    byte[]? Salt,
-    int Iterations)
+    string Error)
 {
     public static ExportReadResult Ok(IReadOnlyList<TunnelRecord> tunnels) =>
-        new(ExportReadStatus.Ok, tunnels, "", null, 0);
+        new(ExportReadStatus.Ok, tunnels, "");
 
-    public static ExportReadResult Fail(ExportReadStatus status, string error, byte[]? salt = null, int iterations = 0) =>
-        new(status, [], error, salt, iterations);
-}
-
-internal sealed class ExportEnvelope
-{
-    [JsonPropertyName("version")]
-    public int Version { get; set; } = TunnelCipher.Version;
-
-    [JsonPropertyName("purpose")]
-    public string Purpose { get; set; } = "export";
-
-    [JsonPropertyName("kdf")]
-    public string? Kdf { get; set; } = TunnelCipher.KdfName;
-
-    [JsonPropertyName("iterations")]
-    public int Iterations { get; set; }
-
-    [JsonPropertyName("salt")]
-    public string? Salt { get; set; }
-
-    [JsonPropertyName("nonce")]
-    public string? Nonce { get; set; }
-
-    [JsonPropertyName("ciphertext")]
-    public string? Ciphertext { get; set; }
+    public static ExportReadResult Fail(ExportReadStatus status, string error) =>
+        new(status, [], error);
 }
 
 internal sealed class TunnelExportDocument
@@ -66,34 +36,7 @@ internal sealed class TunnelExportDocument
     public DateTimeOffset ExportedAt { get; set; }
 
     [JsonPropertyName("tunnels")]
-    public List<TunnelExportEntry> Tunnels { get; set; } = [];
-}
-
-internal sealed class TunnelExportEntry
-{
-    [JsonPropertyName("id")]
-    public Guid Id { get; set; }
-
-    [JsonPropertyName("name")]
-    public string Name { get; set; } = "";
-
-    [JsonPropertyName("listenAddress")]
-    public string ListenAddress { get; set; } = "";
-
-    [JsonPropertyName("listenPort")]
-    public int ListenPort { get; set; }
-
-    [JsonPropertyName("socksHost")]
-    public string SocksHost { get; set; } = "";
-
-    [JsonPropertyName("socksPort")]
-    public int SocksPort { get; set; }
-
-    [JsonPropertyName("remoteHost")]
-    public string RemoteHost { get; set; } = "";
-
-    [JsonPropertyName("remotePort")]
-    public int RemotePort { get; set; }
+    public List<TunnelRecord> Tunnels { get; set; } = [];
 }
 
 internal sealed class TransferEntry
@@ -114,48 +57,25 @@ internal static class TunnelTransfer
     public const string FormatName = "tunnelman-export";
     public const int ExportVersion = 1;
     public const string NotExport = "This file isn't a Tunnelman export.";
-    public const string NotEncrypted = "This export is not encrypted.";
     public const string NoTunnels = "This file has no tunnels.";
     public const string CouldNotRead = "Could not read this file.";
     public const string CouldNotWrite = "Could not write the file.";
     public const string ReservedPath = "That path is used by Tunnelman for the session. Choose another file.";
     public const string FileFilter = "Tunnelman export (*.tunnelman.json)|*.tunnelman.json|JSON (*.json)|*.json";
 
-    public static void Write(string path, IEnumerable<TunnelRecord> records, SessionKey key, ReadOnlySpan<byte> salt, int iterations)
+    public static void Write(string path, IEnumerable<TunnelRecord> records)
     {
         var document = new TunnelExportDocument
         {
             Format = FormatName,
             Version = ExportVersion,
             ExportedAt = DateTimeOffset.UtcNow,
-            Tunnels = records.Select(ToExportEntry).ToList(),
+            Tunnels = records.Select(record => record.Clone()).ToList(),
         };
-        var plain = JsonSerializer.SerializeToUtf8Bytes(document, TunnelStore.JsonOptions);
-        byte[] nonce;
-        byte[] cipher;
-        try
-        {
-            cipher = key.Encrypt(plain, TunnelCipher.ExportAssociatedData, out nonce);
-        }
-        finally
-        {
-            CryptographicOperations.ZeroMemory(plain);
-        }
-
-        var envelope = new ExportEnvelope
-        {
-            Version = TunnelCipher.Version,
-            Purpose = "export",
-            Kdf = TunnelCipher.KdfName,
-            Iterations = iterations,
-            Salt = Convert.ToBase64String(salt),
-            Nonce = Convert.ToBase64String(nonce),
-            Ciphertext = Convert.ToBase64String(cipher),
-        };
-        AtomicFile.WriteAllText(path, JsonSerializer.Serialize(envelope, TunnelStore.JsonOptions));
+        AtomicFile.WriteAllText(path, JsonSerializer.Serialize(document, TunnelStore.JsonOptions));
     }
 
-    public static ExportReadResult Read(string path, SessionKey key)
+    public static ExportReadResult Read(string path)
     {
         string text;
         try
@@ -167,55 +87,7 @@ internal static class TunnelTransfer
             return ExportReadResult.Fail(ExportReadStatus.Unreadable, CouldNotRead);
         }
 
-        JsonNode? root;
-        try
-        {
-            root = JsonNode.Parse(text);
-        }
-        catch (JsonException)
-        {
-            return ExportReadResult.Fail(ExportReadStatus.NotExport, NotExport);
-        }
-
-        if (root is not JsonObject obj)
-            return ExportReadResult.Fail(ExportReadStatus.NotExport, NotExport);
-
-        var hasFormat = TryGet(obj, "format", out _);
-        var hasCiphertext = TryGet(obj, "ciphertext", out var cipherNode)
-            && cipherNode is JsonValue cipherValue
-            && cipherValue.TryGetValue<string>(out var cipherText)
-            && !string.IsNullOrWhiteSpace(cipherText);
-        if (hasFormat && !hasCiphertext)
-            return ExportReadResult.Fail(ExportReadStatus.NotEncrypted, NotEncrypted);
-
-        if (obj["purpose"] is not JsonValue purposeValue
-            || !purposeValue.TryGetValue<string>(out var purpose)
-            || purpose != "export")
-            return ExportReadResult.Fail(ExportReadStatus.NotExport, NotExport);
-
-        if (!TryReadExportEnvelope(obj, out var salt, out var nonce, out var cipherAndTag, out var iterations))
-            return ExportReadResult.Fail(ExportReadStatus.NotExport, NotExport);
-
-        try
-        {
-            var plain = key.Decrypt(nonce, cipherAndTag, TunnelCipher.ExportAssociatedData);
-            try
-            {
-                return ReadDocument(Encoding.UTF8.GetString(plain));
-            }
-            finally
-            {
-                CryptographicOperations.ZeroMemory(plain);
-            }
-        }
-        catch (AuthenticationTagMismatchException)
-        {
-            return ExportReadResult.Fail(ExportReadStatus.WrongPassphrase, TunnelSession.WrongPassphrase, salt, iterations);
-        }
-        catch (Exception ex) when (ex is CryptographicException or JsonException)
-        {
-            return ExportReadResult.Fail(ExportReadStatus.NotExport, NotExport);
-        }
+        return ReadDocument(text);
     }
 
     private static ExportReadResult ReadDocument(string text)
@@ -233,23 +105,14 @@ internal static class TunnelTransfer
         if (root is not JsonObject obj)
             return ExportReadResult.Fail(ExportReadStatus.NotExport, NotExport);
 
-        var hasFormat = TryGet(obj, "format", out var formatNode);
-        if (hasFormat)
-        {
-            if (formatNode is not JsonValue formatValue
-                || !formatValue.TryGetValue<string>(out var format)
-                || !format.Equals(FormatName, StringComparison.OrdinalIgnoreCase))
-                return ExportReadResult.Fail(ExportReadStatus.NotExport, NotExport);
-
-            if (!TryReadInt(obj, "version", required: true, out var exportVersion) || exportVersion != ExportVersion)
-                return ExportReadResult.Fail(ExportReadStatus.NotExport, NotExport);
-        }
-        else if (TryGet(obj, "version", out _)
-            && (!TryReadInt(obj, "version", required: true, out var sessionVersion)
-                || sessionVersion != TunnelCipher.Version))
-        {
+        if (!TryGet(obj, "format", out var formatNode)
+            || formatNode is not JsonValue formatValue
+            || !formatValue.TryGetValue<string>(out var format)
+            || !format.Equals(FormatName, StringComparison.OrdinalIgnoreCase))
             return ExportReadResult.Fail(ExportReadStatus.NotExport, NotExport);
-        }
+
+        if (!TryReadInt(obj, "version", required: true, out var exportVersion) || exportVersion != ExportVersion)
+            return ExportReadResult.Fail(ExportReadStatus.NotExport, NotExport);
 
         if (!TryGet(obj, "tunnels", out var tunnelsNode) || tunnelsNode is not JsonArray array)
             return ExportReadResult.Fail(ExportReadStatus.NotExport, NotExport);
@@ -276,50 +139,6 @@ internal static class TunnelTransfer
         if (list.Count == 0)
             return ExportReadResult.Fail(ExportReadStatus.NoTunnels, NoTunnels);
         return ExportReadResult.Ok(list);
-    }
-
-    private static bool TryReadExportEnvelope(
-        JsonObject obj,
-        out byte[] salt,
-        out byte[] nonce,
-        out byte[] cipherAndTag,
-        out int iterations)
-    {
-        salt = [];
-        nonce = [];
-        cipherAndTag = [];
-        iterations = 0;
-        if (!TryReadInt(obj, "version", required: true, out var version) || version != TunnelCipher.Version)
-            return false;
-        if (!TryGet(obj, "kdf", out var kdfNode)
-            || kdfNode is not JsonValue kdfValue
-            || !kdfValue.TryGetValue<string>(out var kdf)
-            || !string.Equals(kdf, TunnelCipher.KdfName, StringComparison.Ordinal))
-            return false;
-        if (!TryReadInt(obj, "iterations", required: true, out iterations) || !TunnelCipher.IterationsInRange(iterations))
-            return false;
-        if (!TryGetBase64(obj, "salt", TunnelCipher.SaltBytes, out salt)
-            || !TryGetBase64(obj, "nonce", TunnelCipher.NonceBytes, out nonce)
-            || !TryGetBase64(obj, "ciphertext", TunnelCipher.TagBytes, out cipherAndTag, minimum: true))
-            return false;
-        return true;
-    }
-
-    private static bool TryGetBase64(JsonObject obj, string name, int expectedLength, out byte[] bytes, bool minimum = false)
-    {
-        bytes = [];
-        if (!TryGet(obj, name, out var node) || node is not JsonValue value || !value.TryGetValue<string>(out var text))
-            return false;
-        try
-        {
-            bytes = Convert.FromBase64String(text);
-        }
-        catch (FormatException)
-        {
-            return false;
-        }
-
-        return minimum ? bytes.Length >= expectedLength : bytes.Length == expectedLength;
     }
 
     public static IReadOnlyList<TransferEntry> BuildExport(IEnumerable<TunnelRecord> snapshots) =>
@@ -430,7 +249,6 @@ internal static class TunnelTransfer
         HashSet<string>? names,
         List<(string Host, int Port)>? listens)
     {
-        record.Enabled = false;
         var displayName = string.IsNullOrWhiteSpace(record.Name) ? "(unnamed)" : record.Name.Trim();
         var listenText = record.ListenText;
         var remoteText = record.RemoteText;
@@ -509,19 +327,6 @@ internal static class TunnelTransfer
             n++;
         }
     }
-
-    private static TunnelExportEntry ToExportEntry(TunnelRecord record) =>
-        new()
-        {
-            Id = record.Id,
-            Name = record.Name,
-            ListenAddress = record.ListenAddress,
-            ListenPort = record.ListenPort,
-            SocksHost = record.SocksHost,
-            SocksPort = record.SocksPort,
-            RemoteHost = record.RemoteHost,
-            RemotePort = record.RemotePort,
-        };
 
     private static bool TryGet(JsonObject obj, string name, out JsonNode? node)
     {

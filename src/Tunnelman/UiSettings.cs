@@ -11,15 +11,6 @@ internal sealed class UiSettings
         WriteIndented = true,
     };
 
-    public static readonly (int Seconds, string Label)[] AutoLockChoices =
-    [
-        (0, "Don't auto-lock"),
-        (30, "After 30 seconds idle"),
-        (60, "After 1 minute idle"),
-        (300, "After 5 minutes idle"),
-        (900, "After 15 minutes idle"),
-    ];
-
     public static UiSettings Current { get; internal set; } = new();
 
     private readonly string _filePath;
@@ -49,17 +40,6 @@ internal sealed class UiSettings
     [JsonPropertyName("maximized")]
     public bool Maximized { get; set; }
 
-    [JsonPropertyName("autoLockSeconds")]
-    public int AutoLockSeconds { get; set; }
-
-    [JsonPropertyName("lockOnTray")]
-    public bool? LockOnTray { get; set; }
-
-    [JsonPropertyName("stopDialingWhenLocked")]
-    public bool StopDialingWhenLocked { get; set; }
-
-    public bool LockWhenHidden => LockOnTray == true;
-
     public static void Load()
     {
         var settings = new UiSettings();
@@ -77,7 +57,6 @@ internal sealed class UiSettings
             // keep defaults
         }
 
-        Finish(settings);
         Current = settings;
     }
 
@@ -98,7 +77,6 @@ internal sealed class UiSettings
             // keep defaults
         }
 
-        Finish(settings);
         return settings;
     }
 
@@ -109,22 +87,7 @@ internal sealed class UiSettings
         to.NormalRight = from.NormalRight;
         to.NormalBottom = from.NormalBottom;
         to.Maximized = from.Maximized;
-        to.AutoLockSeconds = from.AutoLockSeconds;
-        to.LockOnTray = from.LockOnTray;
-        to.StopDialingWhenLocked = from.StopDialingWhenLocked;
     }
-
-    private static void Finish(UiSettings settings)
-    {
-        settings.AutoLockSeconds = NormalizeAutoLock(settings.AutoLockSeconds);
-        settings.LockOnTray ??= settings.AutoLockSeconds > 0;
-    }
-
-    public static int NormalizeAutoLock(int seconds) => seconds switch
-    {
-        30 or 60 or 300 or 900 => seconds,
-        _ => 0,
-    };
 
     public void Save()
     {
@@ -154,13 +117,5 @@ internal sealed class UiSettings
     {
         var bounds = new NativeWindowPlacement.RectPixels(NormalLeft, NormalTop, NormalRight, NormalBottom);
         NativeWindowPlacement.TryApply(window, bounds, Maximized);
-    }
-
-    public void ApplyLockSettings(int autoLockSeconds, bool lockOnTray, bool stopDialingWhenLocked)
-    {
-        AutoLockSeconds = NormalizeAutoLock(autoLockSeconds);
-        LockOnTray = lockOnTray;
-        StopDialingWhenLocked = stopDialingWhenLocked;
-        Save();
     }
 }

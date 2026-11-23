@@ -12,7 +12,7 @@ public partial class ExitConfirmWindow : Window
         if (allowClear)
             return;
         ClearButton.Visibility = Visibility.Collapsed;
-        BodyText.Text = "Running tunnels will stop. The saved list stays encrypted.";
+        BodyText.Text = "Running tunnels will stop. The saved list stays.";
     }
 
     private void OnSourceInitialized(object? sender, EventArgs e) => TitleBarDarkMode.Apply(this);

@@ -1,5 +1,4 @@
 using System.Windows.Threading;
-using Tunnelman;
 using Tunnelman.Tunnels;
 
 namespace Tunnelman.Tests;
@@ -7,7 +6,7 @@ namespace Tunnelman.Tests;
 public sealed class TunnelSessionTests
 {
     [Fact]
-    public void Unlock_restores_enabled_flags_and_does_not_start()
+    public void Load_keeps_enabled_flags_and_does_not_start()
     {
         var dir = SessionTestHost.NewDir("tunnelman-session-");
         try
@@ -66,7 +65,7 @@ public sealed class TunnelSessionTests
             Assert.Contains("listen", error, StringComparison.OrdinalIgnoreCase);
 
             var reopened = new TunnelSession(new TunnelStore(Path.Combine(dir, "tunnels.json")), Dispatcher.CurrentDispatcher);
-            Assert.True(reopened.TryUnlock(SessionTestHost.Passphrase, out _));
+            Assert.Equal(TunnelLoadStatus.Ok, reopened.Load().Status);
             Assert.Equal("one", Assert.Single(reopened.Tunnels).Name);
         }
         finally
@@ -95,14 +94,14 @@ public sealed class TunnelSessionTests
     }
 
     [Fact]
-    public void SnapshotRecords_disables_copies_only()
+    public void SnapshotRecords_keeps_enabled_and_does_not_mutate_the_row()
     {
         WithEmpty(session =>
         {
             Assert.True(session.TryAdd(SessionTestHost.Hop("one", 22001), out _));
             session.Tunnels[0].Enabled = true;
             var snap = session.SnapshotRecords();
-            Assert.False(Assert.Single(snap).Enabled);
+            Assert.True(Assert.Single(snap).Enabled);
             Assert.True(session.Tunnels[0].Enabled);
             snap[0].RemoteHost = "mutated.test";
             Assert.Equal("example.test", session.Tunnels[0].Record.RemoteHost);
@@ -110,7 +109,7 @@ public sealed class TunnelSessionTests
     }
 
     [Fact]
-    public void TryImport_mints_ids_stays_off_and_rolls_back()
+    public void TryImport_mints_ids_keeps_enabled_and_rolls_back()
     {
         var dir = SessionTestHost.NewDir("tunnelman-session-import-");
         try
@@ -124,7 +123,12 @@ public sealed class TunnelSessionTests
             Assert.Equal(1, added);
             var item = Assert.Single(session.Tunnels);
             Assert.NotEqual(original, item.Id);
-            Assert.False(item.Enabled);
+            Assert.True(item.Enabled);
+
+            var off = SessionTestHost.Hop("off", 22004);
+            off.Enabled = false;
+            Assert.True(session.TryImport([off], out _, out _));
+            Assert.False(session.Tunnels.Single(row => row.Name == "off").Enabled);
             Assert.Null(item.Runtime);
             Assert.Equal(0, session.RunningCount);
             Assert.Contains("Imported 1 tunnel.", session.StatusText, StringComparison.Ordinal);
@@ -138,7 +142,7 @@ public sealed class TunnelSessionTests
             Assert.False(session.TryImport([SessionTestHost.Hop("x", 22003)], out var none, out var error));
             Assert.Equal(0, none);
             Assert.Contains("Could not save", error, StringComparison.OrdinalIgnoreCase);
-            Assert.Equal(2, session.Tunnels.Count);
+            Assert.Equal(3, session.Tunnels.Count);
             Assert.Contains("Could not save", session.StatusText, StringComparison.OrdinalIgnoreCase);
         }
         finally
@@ -254,100 +258,6 @@ public sealed class TunnelSessionTests
         }
     }
 
-    [Fact]
-    public async Task Lock_hides_rows_and_keeps_the_runtime()
-    {
-        var dir = SessionTestHost.NewDir("tunnelman-session-lock-");
-        var file = Path.Combine(dir, "tunnels.json");
-        try
-        {
-            var runtime = new FakeRuntime();
-            var session = SessionTestHost.Open(dir, Dispatcher.CurrentDispatcher, () => runtime);
-            Assert.True(session.TryAdd(SessionTestHost.Hop("one", 22001), out _));
-            session.Tunnels[0].Enabled = true;
-            await session.StartEnabledAsync();
-            var before = File.ReadAllBytes(file);
-
-            Assert.True(session.HasFileKey);
-            Assert.True(session.TryLock());
-            Assert.False(session.HasFileKey);
-            Assert.Equal("Locked", session.StatusText);
-            Assert.Equal("Tunnels keep running. Their hosts stay hidden until you unlock.", session.GateBody);
-            Assert.Empty(session.Tunnels);
-            Assert.Empty(session.SnapshotRecords());
-            Assert.False(session.TryAdd(SessionTestHost.Hop("two", 22002), out _));
-            Assert.Equal(1, session.RunningCount);
-            Assert.Equal(before, File.ReadAllBytes(file));
-
-            Assert.True(session.TryUnlock(SessionTestHost.Passphrase, out _));
-            Assert.Same(runtime, Assert.Single(session.Tunnels).Runtime);
-            Assert.False(session.ConsumeFreshUnlock());
-        }
-        finally
-        {
-            Directory.Delete(dir, recursive: true);
-        }
-    }
-
-    [Fact]
-    public async Task Lock_can_suspend_new_dials_until_unlock()
-    {
-        var previous = UiSettings.Current.StopDialingWhenLocked;
-        var dir = SessionTestHost.NewDir("tunnelman-session-suspend-");
-        try
-        {
-            UiSettings.Current.StopDialingWhenLocked = true;
-            var runtime = new FakeRuntime();
-            var session = SessionTestHost.Open(dir, Dispatcher.CurrentDispatcher, () => runtime);
-            Assert.True(session.TryAdd(SessionTestHost.Hop("one", 22021), out _));
-            session.Tunnels[0].Enabled = true;
-            await session.StartEnabledAsync();
-
-            Assert.True(session.TryLock());
-            Assert.False(session.HasFileKey);
-            Assert.Equal(1, runtime.SuspendCount);
-            Assert.True(runtime.DialSuspended);
-            Assert.Equal(
-                "Connections that are already open stay up. New connections wait until you unlock.",
-                session.GateBody);
-
-            Assert.True(session.TryUnlock(SessionTestHost.Passphrase, out _));
-            Assert.True(session.HasFileKey);
-            Assert.False(runtime.DialSuspended);
-            Assert.Equal(1, runtime.ResumeCount);
-            Assert.Equal(1, session.RunningCount);
-        }
-        finally
-        {
-            UiSettings.Current.StopDialingWhenLocked = previous;
-            Directory.Delete(dir, recursive: true);
-        }
-    }
-
-    [Fact]
-    public async Task Lock_while_start_is_held_leaves_the_row()
-    {
-        var dir = SessionTestHost.NewDir("tunnelman-session-hold-");
-        try
-        {
-            var held = new FakeRuntime();
-            var session = SessionTestHost.Open(dir, Dispatcher.CurrentDispatcher, () => held);
-            Assert.True(session.TryAdd(SessionTestHost.Hop("one", 22001), out _));
-            session.Tunnels[0].Enabled = true;
-            held.HoldStart = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var starting = session.StartEnabledAsync();
-            await held.Entered.Task;
-            Assert.False(session.TryLock());
-            Assert.Single(session.Tunnels);
-            held.HoldStart.TrySetResult(true);
-            await starting;
-        }
-        finally
-        {
-            Directory.Delete(dir, recursive: true);
-        }
-    }
-
     private static void WithEmpty(Action<TunnelSession> body)
     {
         var dir = SessionTestHost.NewDir("tunnelman-session-empty-");
@@ -373,39 +283,17 @@ public sealed class TunnelSessionTests
     {
         public bool Disposed { get; private set; }
         public bool IsRunning { get; set; }
-        public bool DialSuspended { get; private set; }
-        public int SuspendCount { get; private set; }
-        public int ResumeCount { get; private set; }
         public TaskCompletionSource<bool>? HoldStart { get; set; }
         public TaskCompletionSource<bool> Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private IDialSecrets? _secrets;
 
         public event Action<int>? Exited;
 
-        public async Task StartAsync(TunnelRecord record, IDialSecrets secrets, Action<string> log, CancellationToken cancellationToken)
+        public async Task StartAsync(TunnelRecord record, Action<string> log, CancellationToken cancellationToken)
         {
-            DisposeSecrets();
-            _secrets = secrets;
             Entered.TrySetResult(true);
             if (HoldStart is { } hold)
                 await hold.Task.ConfigureAwait(false);
             IsRunning = true;
-            DialSuspended = false;
-        }
-
-        public void SuspendDial()
-        {
-            DialSuspended = true;
-            SuspendCount++;
-            DisposeSecrets();
-        }
-
-        public void ResumeDial(TunnelRecord record, IDialSecrets secrets)
-        {
-            DisposeSecrets();
-            _secrets = secrets;
-            DialSuspended = false;
-            ResumeCount++;
         }
 
         public Task StopAsync()
@@ -418,14 +306,6 @@ public sealed class TunnelSessionTests
         {
             Disposed = true;
             IsRunning = false;
-            DisposeSecrets();
-        }
-
-        private void DisposeSecrets()
-        {
-            if (_secrets is IDisposable disposable)
-                disposable.Dispose();
-            _secrets = null;
         }
 
         public void RaiseExited(int code) => Exited?.Invoke(code);
