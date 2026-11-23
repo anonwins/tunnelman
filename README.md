@@ -10,7 +10,8 @@ Built in the same visual language as SSH Agent GUI.
 - **Enable switch** — turn a tunnel on or off from the list
 - **Plain session** — the saved list is a JSON file and the app opens onto it
 - **Exit prompt** — keep the session, clear it, or cancel
-- **Live log** — connect and disconnect lines for the selected tunnel
+- **Live log** — connect and disconnect lines, opened from the row
+- **Reorder** — drag a row by its grip, or move the selection with Alt+Up and Alt+Down
 - **System tray** — minimize to the tray and keep hops running
 - **Single instance** — launching again brings the existing window forward
 - **Export / import** — pick tunnels and write or read a plain `*.tunnelman.json` file
@@ -45,6 +46,8 @@ The tunnel list lives in `%AppData%\Tunnelman\tunnels.json`. Window placement li
 | Export tunnels | **Export**, or `Ctrl+E` |
 | Import tunnels | **Import**, or `Ctrl+I` |
 | Start or stop | Flip the switch on the row |
+| Log | **Log** on the row. Escape closes that window |
+| Reorder | Drag the grip, or Alt+Up / Alt+Down |
 | Edit / delete | Row buttons on the right |
 | Hide the window | `Escape` (the app stays in the tray) |
 | Exit | Close the window or tray **Exit**, then keep or clear the session |

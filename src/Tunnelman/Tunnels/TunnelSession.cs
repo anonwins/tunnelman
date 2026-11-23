@@ -257,6 +257,30 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
         return copies;
     }
 
+    public bool TryMove(TunnelItem item, int index)
+    {
+        if (_disposed)
+            return false;
+        var old = Tunnels.IndexOf(item);
+        if (old < 0 || index < 0 || index >= Tunnels.Count)
+            return false;
+        if (old == index)
+            return true;
+
+        Tunnels.Move(old, index);
+        if (Persist())
+        {
+            RefreshSummary();
+            return true;
+        }
+
+        var shifted = Tunnels.IndexOf(item);
+        if (shifted >= 0 && shifted != old)
+            Tunnels.Move(shifted, old);
+        RefreshSummary();
+        return false;
+    }
+
     public bool TryImport(IReadOnlyList<TunnelRecord> records, out int added, out string error)
     {
         added = 0;

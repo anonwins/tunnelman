@@ -152,6 +152,57 @@ public sealed class TunnelSessionTests
     }
 
     [Fact]
+    public void TryMove_persists_the_new_order()
+    {
+        var dir = SessionTestHost.NewDir("tunnelman-session-move-");
+        var file = Path.Combine(dir, "tunnels.json");
+        try
+        {
+            var session = SessionTestHost.Open(dir, Dispatcher.CurrentDispatcher);
+            Assert.True(session.TryAdd(SessionTestHost.Hop("one", 22001), out _));
+            Assert.True(session.TryAdd(SessionTestHost.Hop("two", 22002), out _));
+            Assert.True(session.TryAdd(SessionTestHost.Hop("three", 22003), out _));
+            var before = File.ReadAllBytes(file);
+
+            Assert.True(session.TryMove(session.Tunnels[0], 0));
+            Assert.Equal(before, File.ReadAllBytes(file));
+
+            Assert.True(session.TryMove(session.Tunnels[0], 2));
+            Assert.Equal(["two", "three", "one"], session.Tunnels.Select(item => item.Name).ToArray());
+
+            var reopened = new TunnelSession(new TunnelStore(file), Dispatcher.CurrentDispatcher);
+            Assert.Equal(TunnelLoadStatus.Ok, reopened.Load().Status);
+            Assert.Equal(["two", "three", "one"], reopened.Tunnels.Select(item => item.Name).ToArray());
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void TryMove_rolls_back_when_save_fails()
+    {
+        var dir = SessionTestHost.NewDir("tunnelman-session-move-fail-");
+        var file = Path.Combine(dir, "tunnels.json");
+        try
+        {
+            var session = SessionTestHost.Open(dir, Dispatcher.CurrentDispatcher);
+            Assert.True(session.TryAdd(SessionTestHost.Hop("one", 22001), out _));
+            Assert.True(session.TryAdd(SessionTestHost.Hop("two", 22002), out _));
+            BlockWrites(file);
+
+            Assert.False(session.TryMove(session.Tunnels[0], 1));
+            Assert.Equal(["one", "two"], session.Tunnels.Select(item => item.Name).ToArray());
+            Assert.Contains("Could not save", session.StatusText, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Enable_delete_edit_and_clear_roll_back_when_save_fails()
     {
         var dir = SessionTestHost.NewDir("tunnelman-session-rollback-");

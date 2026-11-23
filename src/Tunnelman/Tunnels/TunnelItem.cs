@@ -143,6 +143,16 @@ internal sealed class TunnelItem : INotifyPropertyChanged
         }
 
         OnPropertyChanged(nameof(LogText));
+        OnPropertyChanged(nameof(HasLog));
+    }
+
+    public bool HasLog
+    {
+        get
+        {
+            lock (_lines)
+                return _lines.Count > 0;
+        }
     }
 
     public void AppendLog(string line)
@@ -157,6 +167,7 @@ internal sealed class TunnelItem : INotifyPropertyChanged
         }
 
         OnPropertyChanged(nameof(LogText));
+        OnPropertyChanged(nameof(HasLog));
     }
 
     private void OnPropertyChanged([CallerMemberName] string? name = null) =>
