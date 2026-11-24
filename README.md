@@ -4,6 +4,8 @@ A small Windows tray app for named hops. Listen on a local port, and for each co
 
 Built in the same visual language as SSH Agent GUI.
 
+![Tunnelman](docs/screenshot.png)
+
 ## Features
 
 - **Named tunnels** — add, edit, and delete hops
