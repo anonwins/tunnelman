@@ -1,5 +1,8 @@
 using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace Tunnelman;
@@ -67,37 +70,45 @@ internal sealed class TrayController : IDisposable
 
     private static Icon LoadIcon()
     {
-        var path = Environment.ProcessPath;
-        if (!string.IsNullOrEmpty(path)
-            && !Path.GetFileName(path).Equals("dotnet.exe", StringComparison.OrdinalIgnoreCase))
-        {
-            try
-            {
-                var icon = Icon.ExtractAssociatedIcon(path);
-                if (icon is not null)
-                    return icon;
-            }
-            catch
-            {
-                // fall back
-            }
-        }
-
         var adjacent = Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico");
-        if (File.Exists(adjacent))
+        if (!File.Exists(adjacent))
+            return SystemIcons.Application;
+
+        try
         {
+            using var sourceIcon = new Icon(adjacent);
+            using var source = sourceIcon.ToBitmap();
+            var size = SystemInformation.SmallIconSize;
+            using var bitmap = new Bitmap(size.Width, size.Height, PixelFormat.Format32bppArgb);
+            using (var graphics = Graphics.FromImage(bitmap))
+            {
+                graphics.Clear(Color.Transparent);
+                graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                graphics.SmoothingMode = SmoothingMode.HighQuality;
+                graphics.CompositingQuality = CompositingQuality.HighQuality;
+                graphics.DrawImage(source, new Rectangle(0, 0, size.Width, size.Height));
+            }
+
+            var handle = bitmap.GetHicon();
             try
             {
-                return new Icon(adjacent);
+                using var icon = Icon.FromHandle(handle);
+                return (Icon)icon.Clone();
             }
-            catch
+            finally
             {
-                // fall back
+                DestroyIcon(handle);
             }
         }
-
-        return SystemIcons.Application;
+        catch
+        {
+            return SystemIcons.Application;
+        }
     }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool DestroyIcon(IntPtr handle);
 
     public void Dispose()
     {
