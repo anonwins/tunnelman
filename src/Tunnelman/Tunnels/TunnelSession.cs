@@ -52,8 +52,6 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
 
     public int RunningCount => Tunnels.Count(item => item.Status == TunnelStatus.Running);
 
-    public bool AnyBusy => Tunnels.Any(item => item.IsBusy);
-
     public TunnelLoadResult Load()
     {
         var loaded = _store.Load();
@@ -76,10 +74,6 @@ internal sealed class TunnelSession : INotifyPropertyChanged, IDisposable
             return TunnelTransfer.CouldNotWrite;
         }
     }
-
-    public void SetTransientStatus(string text) => StatusText = text;
-
-    public void RestoreStatus() => RefreshSummary();
 
     public async Task StartEnabledAsync()
     {

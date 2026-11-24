@@ -5,9 +5,15 @@ namespace Tunnelman;
 
 internal static class AppPaths
 {
-    public static string Directory { get; } = Path.Combine(
+    public static string DefaultDirectory { get; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "Tunnelman");
+
+    private static string _directory = DefaultDirectory;
+
+    public static string Directory => _directory;
+
+    public static void Use(string fullPath) => _directory = fullPath;
 
     public static string UiFile => Path.Combine(Directory, "ui.json");
 

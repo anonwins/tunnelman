@@ -22,26 +22,26 @@ internal sealed class SingleInstance : IDisposable
         _waitTask = Task.Run(WaitLoop);
     }
 
-    public static bool TryStart(out SingleInstance? instance)
+    public static bool TryStart(string profileSuffix, out SingleInstance? instance)
     {
         instance = null;
         var sid = WindowsIdentity.GetCurrent().User?.Value;
         if (string.IsNullOrWhiteSpace(sid))
-            return TryAcquire("Local", Environment.MachineName, out instance, out _);
+            return TryAcquire("Local", Environment.MachineName, profileSuffix, out instance, out _);
 
-        if (TryAcquire("Global", sid, out instance, out var fallback) && instance is not null)
+        if (TryAcquire("Global", sid, profileSuffix, out instance, out var fallback) && instance is not null)
             return true;
         if (!fallback)
             return false;
-        return TryAcquire("Local", sid, out instance, out _);
+        return TryAcquire("Local", sid, profileSuffix, out instance, out _);
     }
 
-    private static bool TryAcquire(string scope, string suffix, out SingleInstance? instance, out bool canFallback)
+    private static bool TryAcquire(string scope, string suffix, string profileSuffix, out SingleInstance? instance, out bool canFallback)
     {
         instance = null;
         canFallback = false;
-        var mutexName = $@"{scope}\{MutexNamePrefix}.{suffix}";
-        var eventName = $@"{scope}\{EventNamePrefix}.{suffix}";
+        var mutexName = $@"{scope}\{MutexNamePrefix}.{suffix}{profileSuffix}";
+        var eventName = $@"{scope}\{EventNamePrefix}.{suffix}{profileSuffix}";
         Mutex? mutex = null;
         try
         {

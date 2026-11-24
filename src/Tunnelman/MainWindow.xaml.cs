@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -10,7 +11,6 @@ using DragAction = System.Windows.DragAction;
 using DragDropEffects = System.Windows.DragDropEffects;
 using Brush = System.Windows.Media.Brush;
 using Pen = System.Windows.Media.Pen;
-using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 using MouseEventArgs = System.Windows.Input.MouseEventArgs;
 using Point = System.Windows.Point;
 using QueryContinueDragEventArgs = System.Windows.QueryContinueDragEventArgs;
@@ -42,6 +42,7 @@ public partial class MainWindow : Window
         _session = session;
         DataContext = session;
         InitializeComponent();
+        ProfileButton.ToolTip = AppPaths.Directory;
         CommandBindings.Add(new CommandBinding(AddTunnelCommand, (s, e) => OnAddClick(s, e), (_, e) => e.CanExecute = true));
         CommandBindings.Add(new CommandBinding(ExportCommand, (_, _) => OnExportClick(), (_, e) => e.CanExecute = _session.HasTunnels));
         CommandBindings.Add(new CommandBinding(ImportCommand, (_, _) => OnImportClick(), (_, e) => e.CanExecute = true));
@@ -291,7 +292,7 @@ public partial class MainWindow : Window
     {
         if (sender is not TextBlock { DataContext: TunnelItem item } block)
             return;
-        if (CopyFeedback.TryCopy(item.ListenText, mark: null))
+        if (CopyFeedback.TryCopy(item.ListenText))
             CopyFeedback.FlashText(block);
         e.Handled = true;
     }
@@ -300,32 +301,29 @@ public partial class MainWindow : Window
     {
         if (sender is not TextBlock { DataContext: TunnelItem item } block)
             return;
-        if (CopyFeedback.TryCopy(item.RemoteText, mark: null))
+        if (CopyFeedback.TryCopy(item.RemoteText))
             CopyFeedback.FlashText(block);
         e.Handled = true;
     }
 
-    private void OnTunnelListPreviewMouseDown(object sender, MouseButtonEventArgs e)
+    private void OnOpenProfileClick(object sender, RoutedEventArgs e)
     {
-        if (e.OriginalSource is not DependencyObject source)
-            return;
-        if (FindAncestor<System.Windows.Controls.Primitives.ScrollBar>(source) is not null
-            || FindAncestor<Thumb>(source) is not null
-            || FindAncestor<RepeatButton>(source) is not null)
-            return;
-        if (TunnelList.ContainerFromElement(source) is not ListBoxItem)
-            TunnelList.SelectedItem = null;
-    }
-
-    private static T? FindAncestor<T>(DependencyObject start) where T : DependencyObject
-    {
-        for (var current = start; current is not null; current = System.Windows.Media.VisualTreeHelper.GetParent(current))
+        try
         {
-            if (current is T match)
-                return match;
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = AppPaths.Directory,
+                UseShellExecute = true,
+            });
         }
-
-        return null;
+        catch (Exception ex) when (ex is Win32Exception or IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show(
+                "Could not open the profile folder.",
+                "Tunnelman",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
     }
 
     private void OnLogClick(object sender, RoutedEventArgs e)
@@ -357,21 +355,6 @@ public partial class MainWindow : Window
         _logWindow.Close();
     }
 
-    private void OnListPreviewKeyDown(object sender, KeyEventArgs e)
-    {
-        if (Keyboard.Modifiers != ModifierKeys.Alt || e.Key is not (Key.Up or Key.Down))
-            return;
-        if (TunnelList.SelectedItem is not TunnelItem item)
-            return;
-        var index = _session.Tunnels.IndexOf(item);
-        if (index < 0)
-            return;
-        var next = e.Key == Key.Up ? index - 1 : index + 1;
-        if (next >= 0 && next < _session.Tunnels.Count)
-            _session.TryMove(item, next);
-        e.Handled = true;
-    }
-
     private void OnGripDown(object sender, MouseButtonEventArgs e)
     {
         if (sender is not FrameworkElement { DataContext: TunnelItem item } grip)
@@ -379,7 +362,6 @@ public partial class MainWindow : Window
         _gripItem = item;
         _gripArmed = true;
         _gripStart = e.GetPosition(null);
-        TunnelList.SelectedItem = item;
         grip.CaptureMouse();
     }
 
@@ -422,8 +404,6 @@ public partial class MainWindow : Window
             _dragRow = null;
             ClearInsertLine();
         }
-
-        TunnelList.SelectedItem = item;
     }
 
     private void OnGripQueryContinue(object sender, QueryContinueDragEventArgs e)
@@ -471,7 +451,6 @@ public partial class MainWindow : Window
             insert--;
         insert = Math.Clamp(insert, 0, _session.Tunnels.Count - 1);
         _session.TryMove(item, insert);
-        TunnelList.SelectedItem = item;
         e.Handled = true;
     }
 

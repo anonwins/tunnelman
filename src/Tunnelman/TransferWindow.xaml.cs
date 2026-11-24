@@ -2,7 +2,6 @@ using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using System.Windows.Threading;
 using Tunnelman.Tunnels;
 
 namespace Tunnelman;
@@ -17,8 +16,6 @@ public partial class TransferWindow : Window
     private bool _released;
     private bool _syncingAll;
     private bool _committing;
-    private bool _focused;
-    private int _lastToggled = -1;
 
     public TransferWindow()
     {
@@ -50,7 +47,7 @@ public partial class TransferWindow : Window
         BodyText.Text = export
             ? "Choose what to write into one plain file."
             : "Choose what to add. Each tunnel keeps the enabled flag from the file.";
-        PrimaryGlyph.Text = export ? "\uEDE1" : "\uE8B5";
+        PrimaryGlyph.Text = export ? "\uE898" : "\uE896";
         if (!export && !string.IsNullOrWhiteSpace(sourcePath))
         {
             FileNameText.Text = Path.GetFileName(sourcePath);
@@ -90,40 +87,12 @@ public partial class TransferWindow : Window
 
     private void OnSourceInitialized(object? sender, EventArgs e) => TitleBarDarkMode.Apply(this);
 
-    private void OnLoaded(object sender, RoutedEventArgs e)
-    {
-        if (EntryList.ItemContainerGenerator.Status == System.Windows.Controls.Primitives.GeneratorStatus.ContainersGenerated)
-            Dispatcher.BeginInvoke(FocusFirst, DispatcherPriority.Loaded);
-        else
-            EntryList.ItemContainerGenerator.StatusChanged += OnGeneratorStatusChanged;
-    }
-
-    private void OnGeneratorStatusChanged(object? sender, EventArgs e) => FocusFirst();
-
-    private void FocusFirst()
-    {
-        if (_focused)
-            return;
-        if (EntryList.ItemContainerGenerator.Status != System.Windows.Controls.Primitives.GeneratorStatus.ContainersGenerated)
-            return;
-
-        EntryList.ItemContainerGenerator.StatusChanged -= OnGeneratorStatusChanged;
-        _focused = true;
-        EntryList.Focus();
-        if (EntryList.Items.Count > 0)
-        {
-            EntryList.SelectedIndex = 0;
-            if (EntryList.ItemContainerGenerator.ContainerFromIndex(0) is ListBoxItem item)
-                item.Focus();
-        }
-    }
+    private void OnLoaded(object sender, RoutedEventArgs e) => EntryList.Focus();
 
     private void OnRowPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName != nameof(TransferRow.IsChecked))
             return;
-        if (!_syncingAll && sender is TransferRow row)
-            _lastToggled = _rows.IndexOf(row);
         SyncChrome();
     }
 
@@ -174,42 +143,12 @@ public partial class TransferWindow : Window
         if (container.DataContext is not TransferRow row || !row.CanSelect)
             return;
 
-        var index = _rows.IndexOf(row);
-        var next = !row.IsChecked;
-        if ((Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift && _lastToggled >= 0)
-        {
-            var from = Math.Min(_lastToggled, index);
-            var to = Math.Max(_lastToggled, index);
-            for (var i = from; i <= to; i++)
-            {
-                if (_rows[i].CanSelect)
-                    _rows[i].IsChecked = next;
-            }
-        }
-        else
-        {
-            row.IsChecked = next;
-        }
-
-        _lastToggled = index;
+        row.IsChecked = !row.IsChecked;
         SyncChrome();
     }
 
     private void OnListKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
-        if (e.Key == Key.Space)
-        {
-            if (EntryList.SelectedItem is TransferRow row && row.CanSelect)
-            {
-                row.IsChecked = !row.IsChecked;
-                _lastToggled = _rows.IndexOf(row);
-                SyncChrome();
-            }
-
-            e.Handled = true;
-            return;
-        }
-
         if (e.Key == Key.A && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
         {
             SetAll(true);

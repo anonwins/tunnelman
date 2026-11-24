@@ -52,13 +52,6 @@ internal partial class LogWindow : Window
         Close();
     }
 
-    private void OnCopyClick(object sender, RoutedEventArgs e)
-    {
-        if (sender is not FrameworkElement button)
-            return;
-        CopyFeedback.TryCopy(_item?.LogText, CopyFeedback.FindMark(button));
-    }
-
     private void OnItemChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName != nameof(TunnelItem.LogText))

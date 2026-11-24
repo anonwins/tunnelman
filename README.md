@@ -11,9 +11,9 @@ Built in the same visual language as SSH Agent GUI.
 - **Plain session** — the saved list is a JSON file and the app opens onto it
 - **Exit prompt** — keep the session, clear it, or cancel
 - **Live log** — connect and disconnect lines, opened from the row
-- **Reorder** — drag a row by its grip, or move the selection with Alt+Up and Alt+Down
+- **Reorder** — drag a row by its grip
 - **System tray** — minimize to the tray and keep hops running
-- **Single instance** — launching again brings the existing window forward
+- **Single instance** — launching again with the same profile folder brings the existing window forward
 - **Export / import** — pick tunnels and write or read a plain `*.tunnelman.json` file
 
 ## Requirements
@@ -34,7 +34,7 @@ Run:
 src\Tunnelman\bin\Release\net9.0-windows\Tunnelman.exe
 ```
 
-The tunnel list lives in `%AppData%\Tunnelman\tunnels.json`. Window placement lives in `ui.json` beside it. Enabled tunnels start when the app opens.
+The default profile folder is `%AppData%\Tunnelman`. `--profile-dir <folder>` uses another one. The tunnel list lives in `tunnels.json` there, and window placement lives in `ui.json` beside it. Enabled tunnels start when the app opens.
 
 `*.tunnelman.json` exports are plain JSON. Each tunnel includes `name`, `enabled`, `listenAddress`, `listenPort`, `socksHost`, `socksPort`, `remoteHost`, and `remotePort`. SOCKS can be left empty. Import keeps the enabled flag from the file. A Release build stamps `0.1.0.N` from `BuildNumber.txt`.
 
@@ -47,7 +47,7 @@ The tunnel list lives in `%AppData%\Tunnelman\tunnels.json`. Window placement li
 | Import tunnels | **Import**, or `Ctrl+I` |
 | Start or stop | Flip the switch on the row |
 | Log | **Log** on the row. Escape closes that window |
-| Reorder | Drag the grip, or Alt+Up / Alt+Down |
+| Reorder | Drag the grip |
 | Edit / delete | Row buttons on the right |
 | Hide the window | `Escape` (the app stays in the tray) |
 | Exit | Close the window or tray **Exit**, then keep or clear the session |

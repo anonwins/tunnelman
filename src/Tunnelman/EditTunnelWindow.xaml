@@ -27,7 +27,7 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="120"/>
+            <ColumnDefinition Width="90"/>
             <ColumnDefinition Width="*"/>
             <ColumnDefinition Width="80"/>
         </Grid.ColumnDefinitions>
@@ -40,36 +40,36 @@
         </StackPanel>
 
         <Label Grid.Row="2" Content="Name" VerticalAlignment="Center" Margin="0,0,0,10"/>
-        <TextBox x:Name="NameBox" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,0,0,10"/>
+        <TextBox x:Name="NameBox" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Padding="4" Margin="0,0,0,10"/>
 
         <Label Grid.Row="3" Content="Remote" VerticalAlignment="Center" Margin="0,0,0,10"/>
-        <TextBox x:Name="RemoteHostBox" Grid.Row="3" Grid.Column="1" Margin="0,0,8,10"/>
-        <TextBox x:Name="RemotePortBox" Grid.Row="3" Grid.Column="2" Margin="0,0,0,10"/>
+        <TextBox x:Name="RemoteHostBox" Grid.Row="3" Grid.Column="1" Padding="4" Margin="0,0,8,10"/>
+        <TextBox x:Name="RemotePortBox" Grid.Row="3" Grid.Column="2" Padding="4" Margin="0,0,0,10"/>
 
         <Label Grid.Row="4" Content="Listen" VerticalAlignment="Center" Margin="0,0,0,10"/>
-        <TextBox x:Name="ListenAddressBox" Grid.Row="4" Grid.Column="1" Margin="0,0,8,10"/>
-        <TextBox x:Name="ListenPortBox" Grid.Row="4" Grid.Column="2" Margin="0,0,0,10"/>
+        <TextBox x:Name="ListenAddressBox" Grid.Row="4" Grid.Column="1" Padding="4" Margin="0,0,8,10"/>
+        <TextBox x:Name="ListenPortBox" Grid.Row="4" Grid.Column="2" Padding="4" Margin="0,0,0,10"/>
 
         <Label Grid.Row="5" Content="SOCKS5" VerticalAlignment="Center" Margin="0,0,0,10"/>
-        <TextBox x:Name="SocksHostBox" Grid.Row="5" Grid.Column="1" Margin="0,0,8,10"/>
-        <TextBox x:Name="SocksPortBox" Grid.Row="5" Grid.Column="2" Margin="0,0,0,10"/>
+        <TextBox x:Name="SocksHostBox" Grid.Row="5" Grid.Column="1" Padding="4" Margin="0,0,8,10"/>
+        <TextBox x:Name="SocksPortBox" Grid.Row="5" Grid.Column="2" Padding="4" Margin="0,0,0,10"/>
 
         <TextBlock Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="2"
-                   Text="SOCKS5 is optional. Leave it empty to connect directly from this PC."
+                   Text="Optional. Empty connects directly."
                    Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,0,0,0"/>
 
         <StackPanel Grid.Row="9" Grid.ColumnSpan="3" Orientation="Horizontal" HorizontalAlignment="Right">
-            <Button IsCancel="True" MinWidth="96" Margin="0,0,8,0">
+            <Button Style="{StaticResource RowButton}" IsCancel="True" Margin="0,0,8,0">
                 <StackPanel Orientation="Horizontal">
-                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE711;"/>
-                    <TextBlock Text="Cancel" Margin="8,0,0,0" VerticalAlignment="Center"
+                    <TextBlock Style="{StaticResource GlyphSmall}" Text="&#xE711;"/>
+                    <TextBlock Text="Cancel" Margin="4,0,0,0" VerticalAlignment="Center"
                                Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
                 </StackPanel>
             </Button>
-            <Button Style="{StaticResource PrimaryButton}" IsDefault="True" Click="OnSaveClick" MinWidth="96">
+            <Button Style="{StaticResource RowPrimaryButton}" IsDefault="True" Click="OnSaveClick">
                 <StackPanel Orientation="Horizontal">
-                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE73E;"/>
-                    <TextBlock Text="Save" Margin="8,0,0,0" VerticalAlignment="Center"
+                    <TextBlock Style="{StaticResource GlyphSmall}" Text="&#xE73E;"/>
+                    <TextBlock Text="Save" Margin="4,0,0,0" VerticalAlignment="Center"
                                Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
                 </StackPanel>
             </Button>

@@ -134,18 +134,6 @@ internal sealed class TunnelItem : INotifyPropertyChanged
             IsBusy = false;
     }
 
-    public void ClearLog()
-    {
-        lock (_lines)
-        {
-            _lines.Clear();
-            _log.Clear();
-        }
-
-        OnPropertyChanged(nameof(LogText));
-        OnPropertyChanged(nameof(HasLog));
-    }
-
     public bool HasLog
     {
         get

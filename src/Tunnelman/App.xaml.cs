@@ -19,13 +19,38 @@ public partial class App : System.Windows.Application
         System.Windows.Forms.Application.EnableVisualStyles();
         System.Windows.Forms.Application.SetCompatibleTextRenderingDefault(false);
 
-        if (!SingleInstance.TryStart(out var single) || single is null)
+        if (!ProfileDirectoryOption.TryParse(e.Args, Environment.CurrentDirectory, out var profileDir, out var profileError))
+        {
+            MessageBox.Show(
+                profileError ?? ProfileDirectoryOption.CouldNotUse,
+                "Tunnelman",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+            Shutdown();
+            return;
+        }
+
+        if (profileDir is not null)
+            AppPaths.Use(profileDir);
+
+        if (!SingleInstance.TryStart(ProfileDirectoryOption.InstanceSuffix(profileDir), out var single) || single is null)
         {
             Shutdown();
             return;
         }
 
         _single = single;
+        if (profileDir is not null && File.Exists(profileDir))
+        {
+            MessageBox.Show(
+                "That profile path is a file, not a folder.",
+                "Tunnelman",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+            Shutdown();
+            return;
+        }
+
         if (!AppPaths.TryEnsureDirectory())
         {
             MessageBox.Show(

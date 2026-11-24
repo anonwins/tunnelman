@@ -20,24 +20,24 @@
                        Text="Running tunnels will stop. You can keep the saved list for next time, or clear it."/>
         </StackPanel>
         <StackPanel>
-            <Button IsDefault="True" Click="OnKeepClick" HorizontalAlignment="Stretch" Margin="0,0,0,8">
+            <Button Style="{StaticResource RowButton}" IsDefault="True" Click="OnKeepClick" HorizontalAlignment="Stretch" Margin="0,0,0,8">
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE7E8;"/>
-                    <TextBlock Text="Keep session and exit" Margin="8,0,0,0" VerticalAlignment="Center"
+                    <TextBlock Style="{StaticResource GlyphSmall}" Text="&#xE7E8;"/>
+                    <TextBlock Text="Keep session and exit" Margin="4,0,0,0" VerticalAlignment="Center"
                                Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
                 </StackPanel>
             </Button>
-            <Button x:Name="ClearButton" Style="{StaticResource DangerButton}" Click="OnClearClick" HorizontalAlignment="Stretch" Margin="0,0,0,8">
+            <Button x:Name="ClearButton" Style="{StaticResource RowDangerButton}" Click="OnClearClick" HorizontalAlignment="Stretch" Margin="0,0,0,8">
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE74D;"/>
-                    <TextBlock Text="Clear session and exit" Margin="8,0,0,0" VerticalAlignment="Center"
+                    <TextBlock Style="{StaticResource GlyphSmall}" Text="&#xE74D;"/>
+                    <TextBlock Text="Clear session and exit" Margin="4,0,0,0" VerticalAlignment="Center"
                                Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
                 </StackPanel>
             </Button>
-            <Button IsCancel="True" HorizontalAlignment="Stretch">
+            <Button Style="{StaticResource RowButton}" IsCancel="True" HorizontalAlignment="Stretch">
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE711;"/>
-                    <TextBlock Text="Cancel" Margin="8,0,0,0" VerticalAlignment="Center"
+                    <TextBlock Style="{StaticResource GlyphSmall}" Text="&#xE711;"/>
+                    <TextBlock Text="Cancel" Margin="4,0,0,0" VerticalAlignment="Center"
                                Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
                 </StackPanel>
             </Button>

@@ -14,8 +14,7 @@
         FontFamily="Segoe UI"
         StateChanged="OnStateChanged"
         SourceInitialized="OnSourceInitialized"
-        Closing="OnClosing"
-        PreviewKeyDown="OnListPreviewKeyDown">
+        Closing="OnClosing">
     <Window.InputBindings>
         <KeyBinding Gesture="Ctrl+N" Command="{x:Static local:MainWindow.AddTunnelCommand}"/>
         <KeyBinding Gesture="Ctrl+E" Command="{x:Static local:MainWindow.ExportCommand}"/>
@@ -28,9 +27,19 @@
                 BorderBrush="{StaticResource BorderBrush}"
                 BorderThickness="0,1,0,0"
                 Padding="12,6">
-            <TextBlock Text="{Binding StatusText}"
-                       Foreground="{StaticResource MutedBrush}"
-                       TextTrimming="CharacterEllipsis"/>
+            <DockPanel>
+                <Button x:Name="ProfileButton"
+                        DockPanel.Dock="Right"
+                        Style="{StaticResource StatusIconButton}"
+                        Margin="8,0,0,0"
+                        Click="OnOpenProfileClick">
+                    <TextBlock Style="{StaticResource GlyphSmall}" Text="&#xED25;"/>
+                </Button>
+                <TextBlock Text="{Binding StatusText}"
+                           Foreground="{StaticResource MutedBrush}"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis"/>
+            </DockPanel>
         </Border>
 
         <Grid Margin="16" Background="{StaticResource BgBrush}">
@@ -41,28 +50,28 @@
             </Grid.RowDefinitions>
 
             <Grid Grid.Row="0">
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
-                    <Button Style="{StaticResource PrimaryButton}" Click="OnAddClick" Margin="0,0,8,0">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Style="{StaticResource Glyph}" Text="&#xE710;"/>
-                            <TextBlock Text="Add tunnel" Margin="8,0,0,0" VerticalAlignment="Center"
-                                       Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
-                        </StackPanel>
-                    </Button>
+                <Button Style="{StaticResource PrimaryButton}" Click="OnAddClick" HorizontalAlignment="Left">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE710;"/>
+                        <TextBlock Text="Add tunnel" Margin="4,0,0,0" VerticalAlignment="Center"
+                                   Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                    </StackPanel>
+                </Button>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                     <Button x:Name="ExportButton"
                             Command="{x:Static local:MainWindow.ExportCommand}"
                             Margin="0,0,8,0"
                             ToolTipService.ShowOnDisabled="True">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Style="{StaticResource Glyph}" Text="&#xEDE1;"/>
-                            <TextBlock Text="Export" Margin="8,0,0,0" VerticalAlignment="Center"
+                            <TextBlock Style="{StaticResource Glyph}" Text="&#xE898;"/>
+                            <TextBlock Text="Export" Margin="4,0,0,0" VerticalAlignment="Center"
                                        Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
                         </StackPanel>
                     </Button>
                     <Button Command="{x:Static local:MainWindow.ImportCommand}">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Style="{StaticResource Glyph}" Text="&#xE8B5;"/>
-                            <TextBlock Text="Import" Margin="8,0,0,0" VerticalAlignment="Center"
+                            <TextBlock Style="{StaticResource Glyph}" Text="&#xE896;"/>
+                            <TextBlock Text="Import" Margin="4,0,0,0" VerticalAlignment="Center"
                                        Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
                         </StackPanel>
                     </Button>
@@ -76,13 +85,12 @@
                          AllowDrop="True"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                          ScrollViewer.VerticalScrollBarVisibility="Auto"
-                         PreviewMouseLeftButtonDown="OnTunnelListPreviewMouseDown"
                          DragOver="OnTunnelDragOver"
                          DragLeave="OnTunnelDragLeave"
                          Drop="OnTunnelDrop">
                     <ListBox.ItemTemplate>
                         <DataTemplate DataType="{x:Type tunnels:TunnelItem}">
-                            <Border Padding="10,4" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+                            <Border Padding="4" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto"/>
@@ -91,7 +99,7 @@
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0"
-                                               Text="&#xE76F;"
+                                               Text="&#xE700;"
                                                FontFamily="Segoe MDL2 Assets"
                                                FontSize="14"
                                                VerticalAlignment="Center"
@@ -167,7 +175,7 @@
                                                    Visibility="{Binding HasProxy, Converter={StaticResource BoolToVis}}"/>
                                         <Button Style="{StaticResource RowButton}" Click="OnLogClick"
                                                 ToolTip="Log" Margin="0,0,6,0">
-                                            <TextBlock Style="{StaticResource GlyphSmall}" Text="&#xE9D9;"/>
+                                            <TextBlock Style="{StaticResource GlyphSmall}" Text="&#xF000;"/>
                                         </Button>
                                         <Button Style="{StaticResource RowButton}" Click="OnEditClick"
                                                 IsEnabled="{Binding CanMutate}"
@@ -208,8 +216,8 @@
                                 HorizontalAlignment="Center"
                                 Margin="0,16,0,0">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Style="{StaticResource Glyph}" Text="&#xE8B5;"/>
-                                <TextBlock Text="Import from file" Margin="8,0,0,0" VerticalAlignment="Center"
+                                <TextBlock Style="{StaticResource Glyph}" Text="&#xE896;"/>
+                                <TextBlock Text="Import from file" Margin="4,0,0,0" VerticalAlignment="Center"
                                            Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
                             </StackPanel>
                         </Button>

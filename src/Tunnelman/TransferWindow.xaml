@@ -60,7 +60,6 @@
                  Background="Transparent"
                  BorderThickness="0"
                  Padding="0"
-                 SelectionMode="Single"
                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                  ScrollViewer.VerticalScrollBarVisibility="Auto"
                  PreviewMouseLeftButtonDown="OnRowPreview"
@@ -132,18 +131,18 @@
                        TextTrimming="CharacterEllipsis"
                        Margin="0,0,12,0"/>
             <StackPanel Grid.Column="1" Orientation="Horizontal">
-                <Button IsCancel="True" MinWidth="96" Margin="0,0,8,0">
+                <Button Style="{StaticResource RowButton}" IsCancel="True" Margin="0,0,8,0">
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE711;"/>
-                        <TextBlock Text="Cancel" Margin="8,0,0,0" VerticalAlignment="Center"
+                        <TextBlock Style="{StaticResource GlyphSmall}" Text="&#xE711;"/>
+                        <TextBlock Text="Cancel" Margin="4,0,0,0" VerticalAlignment="Center"
                                    Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
                     </StackPanel>
                 </Button>
-                <Button x:Name="PrimaryButton" Style="{StaticResource PrimaryButton}"
-                        IsDefault="True" MinWidth="96" Click="OnPrimaryClick">
+                <Button x:Name="PrimaryButton" Style="{StaticResource RowPrimaryButton}"
+                        IsDefault="True" Click="OnPrimaryClick">
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock x:Name="PrimaryGlyph" Style="{StaticResource Glyph}" Text="&#xEDE1;"/>
-                        <TextBlock x:Name="PrimaryLabel" Text="Export tunnels" Margin="8,0,0,0" VerticalAlignment="Center"
+                        <TextBlock x:Name="PrimaryGlyph" Style="{StaticResource GlyphSmall}" Text="&#xE898;"/>
+                        <TextBlock x:Name="PrimaryLabel" Text="Export tunnels" Margin="4,0,0,0" VerticalAlignment="Center"
                                    Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
                     </StackPanel>
                 </Button>

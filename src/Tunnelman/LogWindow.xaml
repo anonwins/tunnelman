@@ -16,31 +16,16 @@
         UseLayoutRounding="True"
         PreviewKeyDown="OnPreviewKeyDown">
     <DockPanel Margin="16" Background="{StaticResource BgBrush}">
-        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,12">
-            <Button DockPanel.Dock="Right"
-                    Style="{StaticResource RowButton}"
-                    Click="OnCopyClick"
-                    ToolTip="Copy log"
-                    IsEnabled="{Binding HasLog}"
-                    VerticalAlignment="Top">
-                <StackPanel Orientation="Horizontal">
-                    <TextBlock Style="{StaticResource GlyphSmall}" Text="&#xE8C8;"/>
-                    <TextBlock Text="Copy" Margin="6,0,0,0" VerticalAlignment="Center"
-                               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
-                </StackPanel>
-            </Button>
-            <TextBlock Style="{StaticResource CopyCheck}" DockPanel.Dock="Right" VerticalAlignment="Center"/>
-            <StackPanel>
-                <TextBlock Text="{Binding Name}" FontSize="16" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                <TextBlock Margin="0,4,12,0" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis">
-                    <Run Text="{Binding StatusText, Mode=OneWay}"/>
-                    <Run Text=" · "/>
-                    <Run Text="{Binding ListenText, Mode=OneWay}"/>
-                    <Run Text=" → "/>
-                    <Run Text="{Binding RemoteText, Mode=OneWay}"/>
-                </TextBlock>
-            </StackPanel>
-        </DockPanel>
+        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,12">
+            <TextBlock Text="{Binding Name}" FontSize="16" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+            <TextBlock Margin="0,4,0,0" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis">
+                <Run Text="{Binding StatusText, Mode=OneWay}"/>
+                <Run Text=" · "/>
+                <Run Text="{Binding ListenText, Mode=OneWay}"/>
+                <Run Text=" → "/>
+                <Run Text="{Binding RemoteText, Mode=OneWay}"/>
+            </TextBlock>
+        </StackPanel>
         <Grid>
             <TextBox x:Name="LogBox"
                      IsReadOnly="True"
